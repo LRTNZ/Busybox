@@ -1,0 +1,6 @@
+{
+    "sketch": "Busybox_Edited\\Busybox_Edited.ino",
+    "configuration": "cpu=atmega2560",
+    "board": "arduino:avr:mega",
+    "output": "../Busybox_build"
+}
