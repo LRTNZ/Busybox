@@ -18,7 +18,6 @@ extern CRGBPalette16 myRedWhiteBluePalette;
 extern const TProgmemPalette16 myRedWhiteBluePalette_p PROGMEM;
 /******************************************/
 
-
 /* LED Pin Def */
 
 typedef struct {
@@ -31,6 +30,7 @@ ledStruct leds[22];
 const uint8_t LED_START_PIN = 22;
 const uint8_t TOTAL_LEDS = 22;
 
+// Enum of all of the names of the LEDS
 enum LED_NAME {
   WAIT_LED = 0,
   EDIT_BUT_LED,
@@ -62,29 +62,6 @@ enum LED_STATE {
   LED_TOGGLE
 };
 
-/* #define led1 22
-#define led2 23
-#define led3 24
-#define led4 25
-#define led5 26
-#define led6 27
-#define led7 28
-#define led8 29
-#define led9 30
-#define led10 31
-#define led11 32
-#define led12 33
-#define led13 34
-#define led14 35
-#define led15 36
-#define led16 37
-#define led17 38
-#define led18 39
-#define led19 40
-#define led20 41
-#define led21 42
-#define led22 43 */
-
 #define ledstatus 13
 
 #define switch1 45
@@ -112,6 +89,9 @@ unsigned long currentMillis;
 const unsigned long flash = 500;  //standard flashing light period
 
 void setup() {
+
+  Serial.begin(9600);
+  Serial.println("Serial Working");
   // put your setup code here, to run once:
   myservo.write(90); //Stop Servo
   myservo.attach(12);  // attaches the servo on pin 9 to the servo object
@@ -123,28 +103,7 @@ void setup() {
     currentPalette = RainbowColors_p;
     currentBlending = LINEARBLEND;
   /**********************************************/
- /*  pinMode(led1, OUTPUT); //Waiting Light
-  pinMode(led2, OUTPUT); //Edit Button Light
-  pinMode(led3, OUTPUT); //Spindle Up Button Light
-  pinMode(led4, OUTPUT); //OPtional Stop Button Light
-  pinMode(led5, OUTPUT); //Error Light
-  pinMode(led6, OUTPUT); //60% Load Light 
-  pinMode(led7, OUTPUT); //100% Load Light
-  pinMode(led8, OUTPUT); //40% Load Light
-  pinMode(led9, OUTPUT); //Over Travel Light
-  pinMode(led10, OUTPUT); //Power Light
-  pinMode(led11, OUTPUT); //Machine Zero Button Light
-  pinMode(led12, OUTPUT); //Cycle Start Button Light
-  pinMode(led13, OUTPUT); //Reset Button Light
-  pinMode(led14, OUTPUT); //Coolant Light 
-  pinMode(led15, OUTPUT); //80% Load Light
-  pinMode(led16, OUTPUT); //20% Load Light
-  pinMode(led17, OUTPUT); //Tool Changer Light
-  pinMode(led18, OUTPUT); //Single Block Light
-  pinMode(led19, OUTPUT); //Dry Run Light
-  pinMode(led20, OUTPUT); //Work Light Light
-  pinMode(led21, OUTPUT); //Panic Light
-  pinMode(led22, OUTPUT); //Feed Hold Light */
+
 
   for(int i = 0; i <= TOTAL_LEDS; i++){
     leds[i] = { i + LED_START_PIN, false};
@@ -253,61 +212,21 @@ void loop() {
     }
 
     if(digitalRead(switch9)==1){  //Spindle +10% button
-      if(spindlespeed!=10){
+      if(spindlespeed < 12){
         spindlespeed = spindlespeed + 2;
         delay(150); //bit of button debounce
       }
     }
     
     if(digitalRead(switch12)==1){  //Spindle -10% button
-      if(spindlespeed!=0){
+      if(spindlespeed > 0){
         spindlespeed = spindlespeed - 2;
         delay(150); //bit of button debounce
       }
     }
+
+    // Calls the set spindle speed function
     setSpindleLEDs(spindlespeed);
-    // if(spindlespeed==0){
-    //   digitalWrite(led16, 0); //20% Light
-    //   digitalWrite(led8, 0); //40% Light
-    //   digitalWrite(led6, 0); //60% Light
-    //   digitalWrite(led15, 0); //80% Light
-    //   digitalWrite(led7, 0); //100% Light
-    // }
-    // else if(spindlespeed==2){
-    //   digitalWrite(led16, 1); //20% Light
-    //   digitalWrite(led8, 0); //40% Light
-    //   digitalWrite(led6, 0); //60% Light
-    //   digitalWrite(led15, 0); //80% Light
-    //   digitalWrite(led7, 0); //100% Light
-    // }
-    // else if(spindlespeed==4){
-    //   digitalWrite(led16, 1); //20% Light
-    //   digitalWrite(led8, 1); //40% Light
-    //   digitalWrite(led6, 0); //60% Light
-    //   digitalWrite(led15, 0); //80% Light
-    //   digitalWrite(led7, 0); //100% Light
-    // }
-    // else if(spindlespeed==6){
-    //   digitalWrite(led16, 1); //20% Light
-    //   digitalWrite(led8, 1); //40% Light
-    //   digitalWrite(led6, 1); //60% Light
-    //   digitalWrite(led15, 0); //80% Light
-    //   digitalWrite(led7, 0); //100% Light
-    // }
-    // else if(spindlespeed==8){
-    //   digitalWrite(led16, 1); //20% Light
-    //   digitalWrite(led8, 1); //40% Light
-    //   digitalWrite(led6, 1); //60% Light
-    //   digitalWrite(led15, 1); //80% Light
-    //   digitalWrite(led7, 0); //100% Light
-    // }
-    // if(spindlespeed==10){
-    //   digitalWrite(led16, 1); //20% Light
-    //   digitalWrite(led8, 1); //40% Light
-    //   digitalWrite(led6, 1); //60% Light
-    //   digitalWrite(led15, 1); //80% Light
-    //   digitalWrite(led7, 1); //100% Light
-    // }
     
     if (currentMillis - startMillis >= flash){       //test whether the period has elapsed
       //digitalWrite(led14, !digitalRead(led14));  //if so, change the state of the LED.  Uses a neat trick to change the state
@@ -325,14 +244,20 @@ if (mode == 3){ //Auto Mode
   
 }
 
+
+// Array of the spindle speed LED enums, in the appropriate order to turn them on/off as required
 LED_NAME spindleIndicators[] = {LOAD_20_LED, LOAD_40_LED, LOAD_60_LED, LOAD_80_LED, LOAD_100_LED};
 
 void setSpindleLEDs(uint8_t speed){
   
+  Serial.print("Set Spindle Speed: ");
+  Serial.println(speed);
   // "Static" Preserves variable between function calls
   static uint8_t led_output = 0;
   static byte mask = 1;
   static uint8_t loop_count = 0;
+
+  // Switch that sets the bitmask to turn on the required LEDs, based on the spindle speed.
   switch (speed){
     case 0:
       led_output = 0;
@@ -356,19 +281,17 @@ void setSpindleLEDs(uint8_t speed){
       break;
   }
 
-  loop_count = 0;
-  for(mask = 0b00000001; mask < 16; mask << 1){
+  // Use a bitmask to choose what LEDs to turn on and off for the spindle speed control
+  mask = 0b00000001;
+  for(loop_count = 0; loop_count < 5; loop_count ++){
     if(led_output & mask){
       setLED(leds[spindleIndicators[loop_count]], LED_ON);
     } else {
       setLED(leds[spindleIndicators[loop_count]], LED_OFF);
     }
-    loop_count ++;
+    mask <<= 1;
   }
-
 }
-
-
 
 // Turn all the LEDS on
 void alllightson()
@@ -390,9 +313,7 @@ void alllightsoff()
   }
 }
 
-
 // RANDOM FASTLED CODE?
-
 
 //OLD EXAMPLE CODE FOR LED STRIPES
     //ChangePalettePeriodically();
@@ -400,8 +321,6 @@ void alllightsoff()
     //FillLEDsFromPaletteColors( startIndex);
     //FastLED.show();
     //FastLED.delay(1000 / UPDATES_PER_SECOND);
-
-
 
 void FillLEDsFromPaletteColors( uint8_t colorIndex)
 {
