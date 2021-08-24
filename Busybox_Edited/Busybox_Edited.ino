@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Servo.h>
 #include <FastLED.h>
+
 /*************RGB LED DEFINES**************/
 #define LED_PIN     13
 #define NUM_LEDS    16
@@ -64,18 +65,18 @@ enum LED_STATE {
 
 #define ledstatus 13
 
-#define switch1 45
-#define switch2 46
-#define switch3 47
-#define switch4 48
-#define switch5 49
-#define switch6 50
-#define switch7 51
-#define switch8 52
-#define switch9 53
-#define switch10 69
-#define switch11 68
-#define switch12 67
+#define ESTOP_SWT 45
+#define OP_STOP_BUT 46
+#define CW_SWT 47
+#define CCW_SWT 48
+#define RST_BUT 49
+#define EDIT_BUT 50
+#define AUTO_JOG_SWT 51
+#define MACH_ZERO_SWT 52
+#define SPINDLE_MINUS_BUT 53
+#define FEED_HOLD_SWT 69
+#define CYCLE_START_SWT 68
+#define SPINDLE_PLUS_BUT 67
 
 #define servozero 85
 
@@ -92,9 +93,11 @@ void setup() {
 
   Serial.begin(9600);
   Serial.println("Serial Working");
-  // put your setup code here, to run once:
-  myservo.write(90); //Stop Servo
+
+  // Deals to servo
   myservo.attach(12);  // attaches the servo on pin 9 to the servo object
+  myservo.write(90); //Stop Servo
+  
   /********************RGB LED SETUP*************/
   delay( 500 ); // power-up safety delay (was 3000)
     FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(fast_leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
@@ -105,24 +108,25 @@ void setup() {
   /**********************************************/
 
 
+  // For all of the conventional LEDs, init them in the array of LEDs
   for(int i = 0; i <= TOTAL_LEDS; i++){
     leds[i] = { i + LED_START_PIN, false};
   }
 
   pinMode(ledstatus, OUTPUT); //LED STATUS ON MEGA BOARD
 
-  pinMode(switch1, INPUT_PULLUP); //E-STOP (INVERTED!!!!!!NC SWITCH)
-  pinMode(switch2, INPUT_PULLUP); //OP STOP SWITCH
-  pinMode(switch3, INPUT_PULLUP); //CW SWITCH
-  pinMode(switch4, INPUT_PULLUP); //CCW SWITCH
-  pinMode(switch5, INPUT_PULLUP); //RESET SWITCH (INVERTED!!!!!!NC SWITCH)
-  pinMode(switch6, INPUT_PULLUP); //EDIT BUTTON
-  pinMode(switch7, INPUT_PULLUP); //AUTO JOG SWITCH
-  pinMode(switch8, INPUT_PULLUP); //Machine Zero
-  pinMode(switch9, INPUT_PULLUP); //Spindle -
-  pinMode(switch10, INPUT_PULLUP); //FEED HOLD SWITCH (INVERTED!!!!!!NC SWITCH)
-  pinMode(switch11, INPUT_PULLUP); //CYCLE START
-  pinMode(switch12, INPUT_PULLUP); //Spindle +
+  pinMode(ESTOP_SWT, INPUT_PULLUP); //E-STOP (INVERTED!!!!!!NC SWITCH)
+  pinMode(OP_STOP_BUT, INPUT_PULLUP); //OP STOP SWITCH
+  pinMode(CW_SWT, INPUT_PULLUP); //CW SWITCH
+  pinMode(CCW_SWT, INPUT_PULLUP); //CCW SWITCH
+  pinMode(RST_BUT, INPUT_PULLUP); //RESET BUTTON (INVERTED!!!!!!NC SWITCH)
+  pinMode(EDIT_BUT, INPUT_PULLUP); //EDIT BUTTON
+  pinMode(AUTO_JOG_SWT, INPUT_PULLUP); //AUTO JOG SWITCH
+  pinMode(MACH_ZERO_SWT, INPUT_PULLUP); //Machine Zero
+  pinMode(SPINDLE_MINUS_BUT, INPUT_PULLUP); //Spindle -
+  pinMode(FEED_HOLD_SWT, INPUT_PULLUP); //FEED HOLD SWITCH (INVERTED!!!!!!NC SWITCH)
+  pinMode(CYCLE_START_SWT, INPUT_PULLUP); //CYCLE START
+  pinMode(SPINDLE_PLUS_BUT, INPUT_PULLUP); //Spindle +
 
   /* First Mode Setting wait for reset*/
   startMillis = millis();  //initial start time
@@ -154,9 +158,9 @@ void loop() {
   static uint8_t startIndex = 0; //used for LED stripes
   
   currentMillis = millis();
-  if (digitalRead(switch1) == 1){     //E-stop pressed do red lights till unpressed
+  if (digitalRead(ESTOP_SWT) == 1){     //E-stop pressed do red lights till unpressed
     myservo.write(90);
-    while(digitalRead(switch1) == 1){
+    while(digitalRead(ESTOP_SWT) == 1){
     SetupBlackPalette();         
     currentBlending = NOBLEND;
     FillLEDsFromPaletteColors( startIndex);
@@ -186,7 +190,7 @@ void loop() {
       startMillis = currentMillis;  //IMPORTANT to reset the time period start etc.
     }
       
-    val = digitalRead(switch5); //if reset is pushed go to mode 2
+    val = digitalRead(RST_BUT); //if reset is pushed go to mode 2
     if (val == 1){
       mode = 2;
       setLED(leds[RST_LED], LED_OFF); // Turn off Reset Led just in case
@@ -194,16 +198,16 @@ void loop() {
     
   }
   if (mode == 2){ //Jog Mode
-    if(digitalRead(switch7)==1){
+    if(digitalRead(AUTO_JOG_SWT)==1){
       mode = 3; //If Mode switch is in Auto change modes
     }
     //Update Spindle Control
-    if(digitalRead(switch3)==0){ //CW Mode (switch is inverted)
+    if(digitalRead(CW_SWT)==0){ //CW Mode (switch is inverted)
       int spintemp = 90 - (spindlespeed * 5);
       myservo.write(spintemp);
       
     }
-    else if(digitalRead(switch4)==0){ //CCW Mode (switch is inverted)
+    else if(digitalRead(CCW_SWT)==0){ //CCW Mode (switch is inverted)
       int spintemp = 90 + (spindlespeed * 5);
       myservo.write(spintemp);
     }
@@ -211,14 +215,14 @@ void loop() {
     myservo.write(90);
     }
 
-    if(digitalRead(switch9)==1){  //Spindle +10% button
+    if(digitalRead(SPINDLE_MINUS_BUT)==1){  //Spindle +10% button
       if(spindlespeed < 12){
         spindlespeed = spindlespeed + 2;
         delay(150); //bit of button debounce
       }
     }
     
-    if(digitalRead(switch12)==1){  //Spindle -10% button
+    if(digitalRead(SPINDLE_PLUS_BUT)==1){  //Spindle -10% button
       if(spindlespeed > 0){
         spindlespeed = spindlespeed - 2;
         delay(150); //bit of button debounce
@@ -237,7 +241,7 @@ void loop() {
   }
 
 if (mode == 3){ //Auto Mode
-  if(digitalRead(switch7)==0){
+  if(digitalRead(AUTO_JOG_SWT)==0){
       mode = 2; //If Mode switch is in Jog change modes
     }
 }
