@@ -34,3 +34,4 @@
 - Having spindle at *off*, and pressing *cycle start* will turn on the *dry run* LED - will run for the appropriate amount of time dependent on the mode
  - if *machine zero* button is not pressed before running when first started up, 1/6 chance of the machine turning on the *Over travel* LED and requiring a *reset* to unlock, followed by *machine zero* to fully satisfy.
  - if *machine zero* is pressed, 1/20 chance of it still erroring out when running 
+ - 1/20 chance at startup of the coolant light coming on - Changed to be a 1/6 chance

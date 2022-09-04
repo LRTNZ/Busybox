@@ -4,5 +4,5 @@
     "board": "arduino:avr:mega",
     "output": "../Busybox_build",
     "programmer": "arduino:arduinoisp",
-    "port": "COM4"
+    "port": "COM6"
 }
