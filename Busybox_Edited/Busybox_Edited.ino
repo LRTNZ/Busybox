@@ -122,64 +122,158 @@ enum PROGRAM_STEPS
   SQUARE_MOVE,
   SIDEWAYS_MOVE,
   COOLANT,
+  SPINDLE_OFF,
+  SPINDLE_ON,
   NUMBER_OF_STEPS
 };
 
 struct autoRandomProgram
 {
-  PROGRAM_STEPS programSteps[20];
+  PROGRAM_STEPS programSteps[30];
   int spindleSpeed = 0;
   int currentStep = 0;
+  int movementSpeed = 0;
 };
 
 autoRandomProgram randProgram;
 
-
 bool optStopDesired = false;
-
 
 // Function to generate a random sequence of steps to be executed by the busybox
 void generateRandomProgram()
 {
 
-  randProgram.spindleSpeed = random(2, 12);
+  const int PROGRAM_MIN_LENGTH = 10;
+  const int PROGRAM_MAX_LENGTH = 30;
 
-  int lengthProgram = random(5, 20);
+  randProgram.spindleSpeed = randomSpindleSpeed();
+  randProgram.movementSpeed = random(1,6);
+
+  int lengthProgram = random(PROGRAM_MIN_LENGTH, PROGRAM_MAX_LENGTH);
 
   int skipOptStopIndex = 0;
 
-  if(optStopDesired){
+
+  // If the user wants an optional stop to be included
+  if (optStopDesired)
+  {
     skipOptStopIndex = random(2, lengthProgram - 2);
     randProgram.programSteps[skipOptStopIndex] = OPTIONAL_STOP;
   }
-
 
   int count = 0;
   int previousInstruction = 255;
 
   // While the count of the number of steps is below the desired program length
-  while(count < lengthProgram){
+  while (count < lengthProgram)
+  {
     int randInstruction = random(0, NUMBER_OF_STEPS);
-    
+
     // If the current index already has an optional stop in it, increment the count to go to the next valid index
-    if(randProgram.programSteps[count] == OPTIONAL_STOP){
-      count ++;
+    if (randProgram.programSteps[count] == OPTIONAL_STOP)
+    {
+      count++;
     }
 
     // If the current instruction would be the same as the previous one
-    if(randInstruction == (previousInstruction && (WAITING || TOOL_CHANGE || OVERTRAVEL || COOLANT))){
+    if (randInstruction == (previousInstruction && (WAITING || TOOL_CHANGE || OVERTRAVEL || COOLANT)))
+    {
       continue;
     }
 
     // If the program would end to soon with something boring
-    if((count < 3 && randInstruction == OVERTRAVEL) || (count < 5 && randInstruction == END)){
+    if ((count < 3 && randInstruction == OVERTRAVEL) || (count < PROGRAM_MIN_LENGTH && randInstruction == END))
+    {
       continue;
     }
 
-    
+    // if the instruction is a tool change and there are enough remaining instructions left to fit it (tool change, spindle start, spindle speed value)
+    if (randInstruction == TOOL_CHANGE)
+    {
+
+      // If there is not enough space left to fit a tool change, opt stop, and program end, skip adding the tool change
+      if (lengthProgram - count < 5)
+      {
+        continue;
+      }
+
+      // If the optional index will be in the tool changing codes way, move it.
+      if (skipOptStopIndex > count)
+      {
+        if (skipOptStopIndex - count < 3)
+        {
+          randProgram.programSteps[skipOptStopIndex + 4] = OPTIONAL_STOP;
+          randProgram.programSteps[skipOptStopIndex] = 0;
+        }
+      }
+      randProgram.programSteps[count] = TOOL_CHANGE;
+      randProgram.programSteps[count + 1] = SPINDLE_ON;
+      randProgram.programSteps[count + 2] = randomSpindleSpeed();
+      count += 3;
+      continue;
+    }
+
+    randProgram.programSteps[count] = randInstruction;
 
   }
+
+  randProgram.programSteps[count + 1] = END;
 }
+
+uint8_t randomSpindleSpeed()
+{
+  return random(2, 12);
+}
+
+void print(String toPrint){
+  Serial.println(toPrint);
+}
+
+void printRandomProgram(){
+
+  int count = 0;
+  bool run = true;
+  while(run){
+    
+    switch(randProgram.programSteps[count]){
+      case END:
+        print("end");
+        run = false;
+        break;
+      case WAITING:
+        print("Waiting");
+        break;
+      case TOOL_CHANGE:
+        print("Tool Change");
+      case OVERTRAVEL:
+        print("Overtravel");
+        break;
+      case OPTIONAL_STOP:
+        print("Optional Stop");
+        break;
+      case SQUARE_MOVE:
+        print("Square Move");
+        break;
+      case SIDEWAYS_MOVE:
+        print("Sideways Move");
+        break;
+      case COOLANT:
+        print("Coolant");
+        break;
+      case SPINDLE_OFF:
+        print("Spindle Off");
+        break;
+      case SPINDLE_ON:
+        print("Spindle On");
+        count ++;
+        print(String(randProgram.programSteps[count]));
+        break;
+    }
+    count++;
+  }
+}
+
+
 
 unsigned long startMillis; // two variables to hold timing for timing based decisions
 unsigned long currentMillis;
