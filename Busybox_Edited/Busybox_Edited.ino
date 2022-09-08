@@ -85,28 +85,105 @@ enum LED_STATE
 #define CYCLE_START_BUT 68
 #define SPINDLE_PLUS_BUT 67
 
-Button estop_swt(ESTOP_SWT, DEBOUNCE_TIME, true, false);                 //E-STOP (INVERTED!!!!!!NC SWITCH)
-Button opstop_swt(OP_STOP_BUT, DEBOUNCE_TIME, true, false);              //OP STOP SWITCH
-Button cw_swt(CW_SWT, DEBOUNCE_TIME, true, false);                       //CW SWITCH
-Button ccw_swt(CCW_SWT, DEBOUNCE_TIME, true, false);                     //CCW SWITCH
-Button rst_but(RST_BUT, DEBOUNCE_TIME, true, true);                      //RESET BUTTON (INVERTED!!!!!!NC SWITCH)
-Button edit_but(EDIT_BUT, DEBOUNCE_TIME, true, false);                   //EDIT BUTTON
-Button auto_jog_swt(AUTO_JOG_SWT, DEBOUNCE_TIME, true, false);           //AUTO JOG SWITCH
-Button mach_zero_but(MACH_ZERO_BUT, DEBOUNCE_TIME, true, false);         //Machine Zero
-Button spindle_minus_but(SPINDLE_MINUS_BUT, DEBOUNCE_TIME, true, false); //Spindle -
-Button feed_hold_but(FEED_HOLD_BUT, DEBOUNCE_TIME, true, true);          //FEED HOLD SWITCH (INVERTED!!!!!!NC SWITCH)
-Button cycle_start_but(CYCLE_START_BUT, DEBOUNCE_TIME, true, false);     //CYCLE START
-Button spindle_plus_but(SPINDLE_PLUS_BUT, DEBOUNCE_TIME, true, false);   //Spindle +
+Button estop_swt(ESTOP_SWT, DEBOUNCE_TIME, true, false);                 // E-STOP (INVERTED!!!!!!NC SWITCH)
+Button opstop_swt(OP_STOP_BUT, DEBOUNCE_TIME, true, false);              // OP STOP SWITCH
+Button cw_swt(CW_SWT, DEBOUNCE_TIME, true, false);                       // CW SWITCH
+Button ccw_swt(CCW_SWT, DEBOUNCE_TIME, true, false);                     // CCW SWITCH
+Button rst_but(RST_BUT, DEBOUNCE_TIME, true, true);                      // RESET BUTTON (INVERTED!!!!!!NC SWITCH)
+Button edit_but(EDIT_BUT, DEBOUNCE_TIME, true, false);                   // EDIT BUTTON
+Button auto_jog_swt(AUTO_JOG_SWT, DEBOUNCE_TIME, true, false);           // AUTO JOG SWITCH
+Button mach_zero_but(MACH_ZERO_BUT, DEBOUNCE_TIME, true, false);         // Machine Zero
+Button spindle_minus_but(SPINDLE_MINUS_BUT, DEBOUNCE_TIME, true, false); // Spindle -
+Button feed_hold_but(FEED_HOLD_BUT, DEBOUNCE_TIME, true, true);          // FEED HOLD SWITCH (INVERTED!!!!!!NC SWITCH)
+Button cycle_start_but(CYCLE_START_BUT, DEBOUNCE_TIME, true, false);     // CYCLE START
+Button spindle_plus_but(SPINDLE_PLUS_BUT, DEBOUNCE_TIME, true, false);   // Spindle +
 
 Servo myservo;        // create servo object to control a servo
 #define SERVO_STOP 89 // value the servo will not run at
+int spindleSpeed;     // Create a variable for storing spindle speed - the servo valuef
 
-int mode;         //Create Variable for storing mode 1 = Waiting for reset, 2 = Auto Run Mode, 3 = Manual Run Mode, 4 = E-stop event
-int spindlespeed; //Create a variable for storing spindle speed
+enum MODE
+{
+  WAITING_RESET,
+  MANUAL_RUN,
+  AUTO_RUN,
+  ESTOP
+};
 
-unsigned long startMillis; //two variables to hold timing for timing based decisions
+MODE stateMode = WAITING_RESET; // Create Variable for storing mode 1 = Waiting for reset, 2 = Auto Run Mode, 3 = Manual Run Mode, 4 = E-stop event
+
+enum PROGRAM_STEPS
+{
+  END,
+  WAITING,
+  TOOL_CHANGE,
+  OVERTRAVEL,
+  OPTIONAL_STOP,
+  SQUARE_MOVE,
+  SIDEWAYS_MOVE,
+  COOLANT,
+  NUMBER_OF_STEPS
+};
+
+struct autoRandomProgram
+{
+  PROGRAM_STEPS programSteps[20];
+  int spindleSpeed = 0;
+  int currentStep = 0;
+};
+
+autoRandomProgram randProgram;
+
+
+bool optStopDesired = false;
+
+
+// Function to generate a random sequence of steps to be executed by the busybox
+void generateRandomProgram()
+{
+
+  randProgram.spindleSpeed = random(2, 12);
+
+  int lengthProgram = random(5, 20);
+
+  int skipOptStopIndex = 0;
+
+  if(optStopDesired){
+    skipOptStopIndex = random(2, lengthProgram - 2);
+    randProgram.programSteps[skipOptStopIndex] = OPTIONAL_STOP;
+  }
+
+
+  int count = 0;
+  int previousInstruction = 255;
+
+  // While the count of the number of steps is below the desired program length
+  while(count < lengthProgram){
+    int randInstruction = random(0, NUMBER_OF_STEPS);
+    
+    // If the current index already has an optional stop in it, increment the count to go to the next valid index
+    if(randProgram.programSteps[count] == OPTIONAL_STOP){
+      count ++;
+    }
+
+    // If the current instruction would be the same as the previous one
+    if(randInstruction == (previousInstruction && (WAITING || TOOL_CHANGE || OVERTRAVEL || COOLANT))){
+      continue;
+    }
+
+    // If the program would end to soon with something boring
+    if((count < 3 && randInstruction == OVERTRAVEL) || (count < 5 && randInstruction == END)){
+      continue;
+    }
+
+    
+
+  }
+}
+
+unsigned long startMillis; // two variables to hold timing for timing based decisions
 unsigned long currentMillis;
-const unsigned long flash = 500; //standard flashing light period
+const unsigned long flash = 500; // standard flashing light period
 
 bool coolant_flash = false;
 
@@ -117,8 +194,8 @@ void setup()
   Serial.println("Serial Working");
 
   // Deals to servo
-  myservo.attach(12);        // attaches the servo on pin 9 to the servo object
-  myservo.write(95); // Start servo running so it can be set to it's stop value later on to properly have it not spin.
+  myservo.attach(12); // attaches the servo on pin 9 to the servo object
+  myservo.write(95);  // Start servo running so it can be set to it's stop value later on to properly have it not spin.
 
   /********************RGB LED SETUP*************/
   delay(500); // power-up safety delay (was 3000)
@@ -135,7 +212,7 @@ void setup()
     leds[i] = {i + LED_START_PIN, false};
   }
 
-  pinMode(ledstatus, OUTPUT); //LED STATUS ON MEGA BOARD
+  pinMode(ledstatus, OUTPUT); // LED STATUS ON MEGA BOARD
 
   estop_swt.begin();
   opstop_swt.begin();
@@ -151,10 +228,10 @@ void setup()
   spindle_plus_but.begin();
 
   /* First Mode Setting wait for reset*/
-  startMillis = millis(); //initial start time
-  mode = 1;
-  setLED(leds[POWER_LED], LED_ON); //Turn on Power light
-  spindlespeed = 0;                //Set spindle speed variable at zero
+  startMillis = millis(); // initial start time
+  stateMode = WAITING_RESET;
+  setLED(leds[POWER_LED], LED_ON); // Turn on Power light
+  spindleSpeed = 0;                // Set spindle speed variable at zero
 
   // Deal to the random chance of the coolant light coming on
 
@@ -173,7 +250,6 @@ void setup()
   Serial.println(coolant_random);
 
   myservo.write(SERVO_STOP);
-
 }
 
 void setLED(ledStruct &led, LED_STATE state)
@@ -212,11 +288,11 @@ void loop()
   spindle_plus_but.read();
 
   int val = 0;
-  static uint8_t startIndex = 0; //used for LED stripes
+  static uint8_t startIndex = 0; // used for LED stripes
 
   currentMillis = millis();
   if (estop_swt.isPressed())
-  { //E-stop pressed do red lights till unpressed
+  { // E-stop pressed do red lights till unpressed
     myservo.write(SERVO_STOP);
     unsigned long local_timer = 0;
     bool lights_on = false;
@@ -251,91 +327,91 @@ void loop()
         local_timer = millis();
       }
     }
-    alllightsoff(); //lights off after estop
-    mode = 1;       //back to waiting for reset
+    alllightsoff();            // lights off after estop
+    stateMode = WAITING_RESET; // back to waiting for reset
     SetupBlackPalette();
     currentBlending = NOBLEND;
     FillLEDsFromPaletteColors(startIndex);
     FastLED.show();
   }
 
-  if (mode == 1)
-  { //Waiting for reset
+  if (stateMode == WAITING_RESET)
+  { // Waiting for reset
     if (currentMillis - startMillis >= flash)
-    { //test whether the period has elapsed
-      //digitalWrite(led13, !digitalRead(led13));  //if so, change the state of the LED.  Uses a neat trick to change the state
+    { // test whether the period has elapsed
+      // digitalWrite(led13, !digitalRead(led13));  //if so, change the state of the LED.  Uses a neat trick to change the state
       setLED(leds[RST_LED], LED_TOGGLE);
-      startMillis = currentMillis; //IMPORTANT to reset the time period start etc.
+      startMillis = currentMillis; // IMPORTANT to reset the time period start etc.
     }
 
-    val = rst_but.read(); //if reset is pushed go to mode 2
+    val = rst_but.read(); // if reset is pushed go to mode Autorun
     if (val == 1)
     {
-      mode = 2;
+      stateMode = MANUAL_RUN;
       setLED(leds[RST_LED], LED_OFF); // Turn off Reset Led just in case
     }
   }
-  if (mode == 2)
-  { //Jog Mode
+  if (stateMode == MANUAL_RUN)
+  { // Jog Mode
     if (auto_jog_swt.isPressed())
     {
-      mode = 3; //If Mode switch is in Auto change modes
+      stateMode = AUTO_RUN; // If Mode switch is in Auto change modes
     }
-    //Update Spindle Control
+    // Update Spindle Control
     if (cw_swt.isPressed() && !ccw_swt.isPressed())
-    { //CW Mode (switch is inverted - handled by library)   Need to check for the state of the other switch position, to be able to tell when we are in the stop positiong
-      int spintemp = SERVO_STOP + (spindlespeed * 5);
+    { // CW Mode (switch is inverted - handled by library)   Need to check for the state of the other switch position, to be able to tell when we are in the stop positiong
+      int spintemp = SERVO_STOP + (spindleSpeed * 5);
       // Serial.println("Spindle CW Rotate");
       myservo.write(spintemp);
     }
     else if (ccw_swt.isPressed() && !cw_swt.isPressed())
-    { //CCW Mode (switch is inverted - handled by library)
-      int spintemp = SERVO_STOP - (spindlespeed * 5);
+    { // CCW Mode (switch is inverted - handled by library)
+      int spintemp = SERVO_STOP - (spindleSpeed * 5);
       // Serial.println("Servo CCW");
       myservo.write(spintemp);
     }
     else
-    { //Stop spindle
-      //Serial.println("Servo stop");
+    { // Stop spindle
+      // Serial.println("Servo stop");
       myservo.write(SERVO_STOP);
     }
 
     if (spindle_plus_but.wasPressed())
-    { //Spindle +10% button
-      if (spindlespeed < 12)
+    { // Spindle +10% button
+      if (spindleSpeed < 12)
       {
-        spindlespeed = spindlespeed + 2;
+        spindleSpeed = spindleSpeed + 2;
       }
     }
 
     if (spindle_minus_but.wasPressed())
-    { //Spindle -10% button
-      if (spindlespeed > 0)
+    { // Spindle -10% button
+      if (spindleSpeed > 0)
       {
-        spindlespeed = spindlespeed - 2;
+        spindleSpeed = spindleSpeed - 2;
       }
     }
 
     // Calls the set spindle speed function
-    setSpindleLEDs(spindlespeed);
+    setSpindleLEDs(spindleSpeed);
   }
 
-  if (mode == 3)
-  { //Auto Mode
+  if (stateMode == AUTO_RUN)
+  { // Auto Mode
     if (auto_jog_swt.isReleased())
     {
-      mode = 2; //If Mode switch is in Jog change modes
+      stateMode = MANUAL_RUN; // If Mode switch is in Jog change modes
     }
   }
 
-  if (coolant_flash && mode > 0)
+  if (coolant_flash && (stateMode != WAITING_RESET || stateMode != ESTOP))
   {
     // Blink coolant LED if needed
     if (currentMillis - startMillis >= flash)
-    { //test whether the period has elapsed
-      //digitalWrite(led14, !digitalRead(led14));  //if so, change the state of the LED.  Uses a neat trick to change the state
+    { // test whether the period has elapsed
+      // digitalWrite(led14, !digitalRead(led14));  //if so, change the state of the LED.  Uses a neat trick to change the state
       setLED(leds[COOL_LED], LED_TOGGLE);
-      startMillis = currentMillis; //IMPORTANT to reset the time period start etc.
+      startMillis = currentMillis; // IMPORTANT to reset the time period start etc.
     }
   }
 }
@@ -346,9 +422,9 @@ LED_NAME spindleIndicators[] = {LOAD_20_LED, LOAD_40_LED, LOAD_60_LED, LOAD_80_L
 void setSpindleLEDs(uint8_t speed)
 {
 
-  //Serial.print("Set Spindle Speed: ");
-  //Serial.println(speed);
-  // "Static" Preserves variable between function calls
+  // Serial.print("Set Spindle Speed: ");
+  // Serial.println(speed);
+  //  "Static" Preserves variable between function calls
   static uint8_t led_output = 0;
   static byte mask = 1;
   static uint8_t loop_count = 0;
@@ -420,12 +496,12 @@ void alllightsoff()
 
 // RANDOM FASTLED CODE?
 
-//OLD EXAMPLE CODE FOR LED STRIPES
-//ChangePalettePeriodically();
-//startIndex = startIndex + 1; //motion speed
-//FillLEDsFromPaletteColors( startIndex);
-//FastLED.show();
-//FastLED.delay(1000 / UPDATES_PER_SECOND);
+// OLD EXAMPLE CODE FOR LED STRIPES
+// ChangePalettePeriodically();
+// startIndex = startIndex + 1; //motion speed
+// FillLEDsFromPaletteColors( startIndex);
+// FastLED.show();
+// FastLED.delay(1000 / UPDATES_PER_SECOND);
 
 void FillLEDsFromPaletteColors(uint8_t colorIndex)
 {
