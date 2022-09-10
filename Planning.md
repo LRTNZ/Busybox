@@ -35,3 +35,19 @@
  - if *machine zero* button is not pressed before running when first started up, 1/6 chance of the machine turning on the *Over travel* LED and requiring a *reset* to unlock, followed by *machine zero* to fully satisfy.
  - if *machine zero* is pressed, 1/20 chance of it still erroring out when running 
  - 1/20 chance at startup of the coolant light coming on - Changed to be a 1/6 chance
+
+
+ Optional stop starts - make opt stop led in button blink
+
+ tool change turn off coolant
+
+ jog mode - press cycle start in jog mode, and it does a random 2 - 3 instructions of the code.
+ opt stop waits and blinks the opt stop button when waiting to be cleared
+ wait just waits for cycle start to be pressed to carry on
+ feed hold pauses execution in both modes
+ edit mode lights up when enabled, off when not
+ buttons pressed in edit toggle between states on press
+ can add machine zero to actions to do (Starts with led bars at random lenghts that move back to zero)
+ add random work light being on
+
+ add panic when over travel or spindle switch turned off when running program
