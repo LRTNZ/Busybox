@@ -29,7 +29,7 @@ typedef struct
   bool pinVal;
 } ledStruct;
 
-ledStruct leds[22];
+ledStruct led[22];
 
 const uint8_t LED_START_PIN = 22;
 const uint8_t TOTAL_LEDS = 22;
@@ -114,8 +114,8 @@ MODE stateMode = WAITING_RESET; // Create Variable for storing mode 1 = Waiting 
 
 enum PROGRAM_STEPS
 {
-
-  SQUARE_MOVE = 0,
+  BLANK = 0,
+  SQUARE_MOVE,
   REVERSE_SQUARE,
   REVERSE_SIDEWAYS,
   SIDEWAYS_MOVE,
@@ -130,17 +130,30 @@ enum PROGRAM_STEPS
   NUMBER_OF_STEPS
 };
 
-struct autoRandomProgram
+struct instruction
 {
-  PROGRAM_STEPS programSteps[30];
+  PROGRAM_STEPS command;
+  int arg1;
+  int arg2;
+  int arg3;
+};
+
+struct program
+{
+  instruction programSteps[35];
   int spindleSpeed = 0;
   int currentStep = 0;
+  int totalLength = 0;
   int movementSpeed = 0;
   bool optStop = false;
   int optStop_index = 0;
+  unsigned long lastStepMillis = 0;
+  unsigned long nextStepDelay = 0;
+  bool executeAuto = false;
+  bool executeSingle = false;
 };
 
-autoRandomProgram randProgram;
+program randProgram;
 
 bool optStopDesired = false;
 
@@ -148,18 +161,16 @@ bool optStopDesired = false;
 void generateRandomProgram()
 {
 
-  for (int i = 0; i < 30; i++)
-  {
-    randProgram.programSteps[i] = 0;
-  }
+  program tempProgram;
 
   const int PROGRAM_MIN_LENGTH = 10;
-  const int PROGRAM_MAX_LENGTH = 30;
+  const int PROGRAM_MAX_LENGTH = 30; // Keep below initialized length to avoid issues with out of bounds errors
 
-  randProgram.spindleSpeed = randomSpindleSpeed();
-  randProgram.movementSpeed = random(1, 6);
+  tempProgram.spindleSpeed = randomSpindleSpeed();
+  tempProgram.movementSpeed = random(1, 6);
 
   int lengthProgram = random(PROGRAM_MIN_LENGTH, PROGRAM_MAX_LENGTH);
+  tempProgram.totalLength = lengthProgram;
 
   int skipOptStopIndex = 0;
 
@@ -167,32 +178,29 @@ void generateRandomProgram()
   if (optStopDesired)
   {
     skipOptStopIndex = random(3, lengthProgram - 2);
-    randProgram.programSteps[skipOptStopIndex] = OPTIONAL_STOP;
-    print(String(skipOptStopIndex));
+    tempProgram.programSteps[skipOptStopIndex] = instruction{OPTIONAL_STOP};
   }
 
   int count = 0;
-  randProgram.programSteps[0] = SPINDLE_ON;
+  tempProgram.programSteps[0] = instruction{SPINDLE_ON, randomSpindleSpeed()};
   count++;
   if (1 == random(1, 3))
   {
-    randProgram.programSteps[count] = COOLANT;
+    tempProgram.programSteps[count] = instruction{COOLANT};
     count++;
   }
 
   int previousInstruction = 255;
-  print("Count at start: ");
-  print(String(count));
-  setLED(leds[FEED_HOLD_LED], LED_ON);
-  // While the count of the number of steps is below the desired program length
+  // setLED(led[FEED_HOLD_LED], LED_ON);
+  //  While the count of the number of steps is below the desired program length
   while (count < lengthProgram)
   {
-    setLED(leds[FEED_HOLD_LED], LED_ON);
+    setLED(led[FEED_HOLD_LED], LED_ON);
     randomSeed(analogRead(0) + analogRead(1) + analogRead(3));
-    int randInstruction = random(0, NUMBER_OF_STEPS - 7);
+    int randInstruction = random(1, NUMBER_OF_STEPS - 7);
 
     // If the current index already has an instruction in it, increment the count to go to the next valid index
-    if (randProgram.programSteps[count] > 0)
+    if (tempProgram.programSteps[count].command == BLANK)
     {
       count++;
       continue;
@@ -201,10 +209,7 @@ void generateRandomProgram()
     // If the current instruction would be the same as the previous one
     if (randInstruction == previousInstruction)
     {
-      Serial.println("Matches previous");
-      //  if(previousInstruction > NUMBER_OF_STEPS - 9){
       continue;
-      //}
     }
 
     // If the program would end to soon with something boring
@@ -243,25 +248,25 @@ void generateRandomProgram()
     // Will randomly enable/disable the cooland for a tool
     if (randInstruction == TOOL_CHANGE)
     {
-      randProgram.programSteps[count] = randInstruction;
+      tempProgram.programSteps[count].command = randInstruction;
       previousInstruction = randInstruction;
       count++;
       if (1 == random(1, 3))
       {
-        randProgram.programSteps[count] = COOLANT;
+        tempProgram.programSteps[count].command = COOLANT;
         count++;
       }
       continue;
     }
-
-    print("Instruction: ");
-    print(String((int)randInstruction));
-    randProgram.programSteps[count] = randInstruction;
+    tempProgram.programSteps[count].command = randInstruction;
     previousInstruction = randInstruction;
     count++;
   }
 
-  randProgram.programSteps[count + 1] = END;
+  tempProgram.programSteps[count + 1].command = SPINDLE_OFF;
+  tempProgram.programSteps[count + 2].command = END;
+
+  randProgram = tempProgram;
 }
 
 uint8_t randomSpindleSpeed()
@@ -282,7 +287,7 @@ void printRandomProgram()
   while (run)
   {
 
-    switch (randProgram.programSteps[count])
+    switch (randProgram.programSteps[count].command)
     {
     case END:
       print("end");
@@ -320,13 +325,15 @@ void printRandomProgram()
       break;
     case SPINDLE_ON:
       print("Spindle On");
-      count++;
-      print(String(randProgram.programSteps[count]));
+      print(String(randProgram.programSteps[count].arg1));
       break;
     }
     count++;
   }
 }
+
+uint8_t x_axis = 0;
+uint8_t y_axis = 0;
 
 unsigned long startMillis; // two variables to hold timing for timing based decisions
 unsigned long currentMillis;
@@ -354,9 +361,10 @@ void setup()
   /**********************************************/
 
   // For all of the conventional LEDs, init them in the array of LEDs
-  for (int i = 0; i <= TOTAL_LEDS; i++)
+  for (int i = 0; i < TOTAL_LEDS; i++)
   {
-    leds[i] = {i + LED_START_PIN, false};
+    led[i] = {i + LED_START_PIN, false};
+    // digitalWrite(led[i].pinNum, HIGH);
   }
 
   pinMode(ledstatus, OUTPUT); // LED STATUS ON MEGA BOARD
@@ -377,28 +385,34 @@ void setup()
   /* First Mode Setting wait for reset*/
   startMillis = millis(); // initial start time
   stateMode = WAITING_RESET;
-  setLED(leds[POWER_LED], LED_ON); // Turn on Power light
-  spindleSpeed = 0;                // Set spindle speed variable at zero
+  setLED(led[POWER_LED], LED_ON); // Turn on Power light
+  spindleSpeed = 0;               // Set spindle speed variable at zero
 
   // Deal to the random chance of the coolant light coming on
 
   // Seed the random number generator
   randomSeed(analogRead(0) + analogRead(1));
 
+  x_axis = random(0, 8);
+  y_axis = random(0, 8);
+
   long coolant_random = random(0, 6);
 
   if (coolant_random == 5)
   {
     // If the coolant error needs to come on, set that light to start flashing here
-    setLED(leds[COOL_LED], LED_TOGGLE);
+    setLED(led[COOL_LED], LED_ON);
     coolant_flash = true;
   }
-  Serial.print("Coolant number: ");
-  Serial.println(coolant_random);
+
+  // Debug for the coolant light randomly being on at the start of the program
+  // Serial.print("Coolant number: ");
+  // Serial.println(coolant_random);
 
   myservo.write(SERVO_STOP);
 
   generateRandomProgram();
+  Serial.println("Print out program: ");
   printRandomProgram();
 }
 
@@ -490,15 +504,17 @@ void loop()
     if (currentMillis - startMillis >= flash)
     { // test whether the period has elapsed
       // digitalWrite(led13, !digitalRead(led13));  //if so, change the state of the LED.  Uses a neat trick to change the state
-      setLED(leds[RST_LED], LED_TOGGLE);
+      setLED(led[RST_LED], LED_TOGGLE);
       startMillis = currentMillis; // IMPORTANT to reset the time period start etc.
     }
 
-    val = rst_but.read(); // if reset is pushed go to mode Autorun
+    val = rst_but.wasPressed(); // if reset is pushed go to mode Autorun
     if (val == 1)
     {
+      setAllResets();
       stateMode = MANUAL_RUN;
-      setLED(leds[RST_LED], LED_OFF); // Turn off Reset Led just in case
+      setLED(led[RST_LED], LED_OFF); // Turn off Reset Led just in case
+      generateRandomProgram();       // Generates a new random program.
     }
   }
   if (stateMode == MANUAL_RUN)
@@ -506,24 +522,6 @@ void loop()
     if (auto_jog_swt.isPressed())
     {
       stateMode = AUTO_RUN; // If Mode switch is in Auto change modes
-    }
-    // Update Spindle Control
-    if (cw_swt.isPressed() && !ccw_swt.isPressed())
-    { // CW Mode (switch is inverted - handled by library)   Need to check for the state of the other switch position, to be able to tell when we are in the stop positiong
-      int spintemp = SERVO_STOP + (spindleSpeed * 5);
-      // Serial.println("Spindle CW Rotate");
-      myservo.write(spintemp);
-    }
-    else if (ccw_swt.isPressed() && !cw_swt.isPressed())
-    { // CCW Mode (switch is inverted - handled by library)
-      int spintemp = SERVO_STOP - (spindleSpeed * 5);
-      // Serial.println("Servo CCW");
-      myservo.write(spintemp);
-    }
-    else
-    { // Stop spindle
-      // Serial.println("Servo stop");
-      myservo.write(SERVO_STOP);
     }
 
     if (spindle_plus_but.wasPressed())
@@ -541,9 +539,6 @@ void loop()
         spindleSpeed = spindleSpeed - 2;
       }
     }
-
-    // Calls the set spindle speed function
-    setSpindleLEDs(spindleSpeed);
   }
 
   if (stateMode == AUTO_RUN)
@@ -554,16 +549,254 @@ void loop()
     }
   }
 
+  if (cycle_start_but.wasPressed())
+  {
+    Serial.println("Cycle start pressed");
+    if (stateMode == MANUAL_RUN)
+    {
+      print("Execute Single Block Should Happen");
+      randProgram.executeSingle = true;
+    }
+    else if (stateMode == AUTO_RUN)
+    {
+      randProgram.executeAuto = true;
+    }
+  }
+
   if (coolant_flash && (stateMode != WAITING_RESET || stateMode != ESTOP))
   {
     // Blink coolant LED if needed
     if (currentMillis - startMillis >= flash)
     { // test whether the period has elapsed
       // digitalWrite(led14, !digitalRead(led14));  //if so, change the state of the LED.  Uses a neat trick to change the state
-      setLED(leds[COOL_LED], LED_TOGGLE);
+      setLED(led[COOL_LED], LED_TOGGLE);
       startMillis = currentMillis; // IMPORTANT to reset the time period start etc.
     }
   }
+
+  executeProgramAutomatically();
+}
+
+enum subRoutineResets
+{
+  TOOL_CHANGE_RST,
+  EXECUTE_RST,
+  NUMBER_RSTS
+};
+
+bool resetsToDo[NUMBER_RSTS];
+
+// Set all the subroutines to update their internal static values as required when a reset is fired off
+void setAllResets()
+{
+  for (uint8_t i = 0; i < NUMBER_RSTS; i++)
+  {
+    resetsToDo[i] = true;
+  }
+  generateRandomProgram();
+}
+
+instruction currentInstruction;
+bool finishedInstruction = false;
+
+void executeProgramAutomatically()
+{
+
+  // static uint8_t currentStep = 0;
+  static bool loadedInstruction = false;
+  static bool finishedProgram = true;
+  static bool programStart = true;
+
+  if (resetsToDo[EXECUTE_RST])
+  {
+    // currentStep = 0;
+    finishedInstruction = false;
+    loadedInstruction = false;
+    programStart = false;
+    resetsToDo[EXECUTE_RST] = false;
+  }
+
+  // if it is not time to perform the next step, don't do anything
+  if (currentMillis < (randProgram.lastStepMillis + randProgram.nextStepDelay))
+  {
+    return;
+  }
+
+  // If an instruction has not been loaded to be run
+  if (!loadedInstruction && !finishedInstruction)
+  {
+    print("Loaded Instruction");
+    // If we are at the first step of the program
+    if (randProgram.currentStep == 0 && programStart)
+    {
+      currentInstruction = randProgram.programSteps[randProgram.currentStep];
+      programStart = false;
+    }
+    else
+    {
+      randProgram.currentStep++;
+      currentInstruction = randProgram.programSteps[randProgram.currentStep];
+    }
+    loadedInstruction = true;
+    finishedInstruction = false;
+    print("Loaded Instruction number:");
+    print(String(randProgram.currentStep));
+  }
+
+  // if the single block flag is on
+  if (randProgram.executeSingle)
+  {
+    print("Single step process should happen");
+    setLED(led[SINGLE_BLOCK_LED], LED_ON);
+  }
+
+  // if it is not time to run a single step, and we are not in automatic mode return
+  if (!randProgram.executeSingle && !randProgram.executeAuto)
+  {
+    // makes sure the single block LED gets turned off
+    setLED(led[SINGLE_BLOCK_LED], LED_OFF);
+    return;
+  }
+
+  switch (currentInstruction.command)
+  {
+
+  case SPINDLE_ON:
+    setSpindleSpeed(currentInstruction.arg1);
+    oneShotEnd(750);
+  case SPINDLE_OFF:
+    setSpindleSpeed(SERVO_STOP);
+    oneShotEnd(1500);
+  case TOOL_CHANGE:
+    print("tool change case");
+    finishedInstruction = toolChange();
+    break;
+  case COOLANT:
+    print("Coolant enable");
+    setCoolantState(true);
+    oneShotEnd(1000);
+    break;
+  case END:
+    randProgram.executeAuto = false;
+    randProgram.executeSingle = false;
+    randProgram.currentStep = 0;
+    randProgram.lastStepMillis = 0;
+    randProgram.nextStepDelay = 0;
+    // Reached the end of the current program
+    resetsToDo[EXECUTE_RST] = true;
+    break;
+  default:
+    print("defaulted");
+    print(String(currentInstruction.command));
+    finishedInstruction = true;
+    break;
+  }
+
+  if (finishedInstruction)
+  {
+    loadedInstruction = false;
+    finishedInstruction = false;
+    randProgram.executeSingle = false;
+  }
+}
+
+void oneShotEnd(int nextDelay)
+{
+  randProgram.nextStepDelay = nextDelay;
+  randProgram.lastStepMillis = currentMillis;
+  finishedInstruction = true;
+}
+
+bool toolChange()
+{
+
+  print("Tool Change Steps called");
+  static int stepTool = 0;
+  print(String(stepTool));
+
+  if (resetsToDo[TOOL_CHANGE_RST])
+  {
+    stepTool = 0;
+    resetsToDo[TOOL_CHANGE_RST] = false;
+  }
+
+  // Actions to do at each step of the toolChange
+  switch (stepTool)
+  {
+  case 0:
+    setLED(led[TOOL_CHANGE_LED], LED_ON);
+    stepTool++;
+    randProgram.lastStepMillis = millis();
+    randProgram.nextStepDelay = 1000;
+    break;
+  case 1:
+    setCoolantState(false);
+    stepTool++;
+    randProgram.lastStepMillis = millis();
+    randProgram.nextStepDelay = 500;
+    break;
+  case 2:
+    setSpindleSpeed(0);
+    stepTool++;
+    randProgram.lastStepMillis = millis();
+    randProgram.nextStepDelay = 1000;
+    break;
+  case 3:
+    setLED(led[TOOL_CHANGE_LED], LED_OFF);
+    stepTool++;
+    randProgram.lastStepMillis = millis();
+    randProgram.nextStepDelay = 1000;
+    break;
+  case 4:
+    setSpindleSpeed(currentInstruction.arg1);
+    stepTool++;
+    randProgram.lastStepMillis = millis();
+    break;
+  }
+
+  // If we have reached the end of the sequence
+  if (stepTool == 5)
+  {
+    stepTool = 0;
+    return true;
+  }
+
+  return false;
+}
+
+bool setCoolantState(bool state)
+{
+  LED_STATE toSet = LED_OFF;
+  if (state)
+    toSet = LED_ON;
+  setLED(led[COOL_LED], toSet);
+  return true;
+}
+
+void setSpindleSpeed(uint8_t speedPassed)
+{
+
+  // Update Spindle Control
+  if (cw_swt.isPressed() && !ccw_swt.isPressed())
+  { // CW Mode (switch is inverted - handled by library)   Need to check for the state of the other switch position, to be able to tell when we are in the stop positiong
+    int spintemp = SERVO_STOP + (spindleSpeed * 5);
+    // Serial.println("Spindle CW Rotate");
+    myservo.write(spintemp);
+  }
+  else if (ccw_swt.isPressed() && !cw_swt.isPressed())
+  { // CCW Mode (switch is inverted - handled by library)
+    int spintemp = SERVO_STOP - (spindleSpeed * 5);
+    // Serial.println("Servo CCW");
+    myservo.write(spintemp);
+  }
+  else
+  { // Stop spindle
+    // Serial.println("Servo stop");
+    myservo.write(SERVO_STOP);
+  }
+
+  // Calls the set spindle speed function
+  setSpindleLEDs(spindleSpeed);
 }
 
 // Array of the spindle speed LED enums, in the appropriate order to turn them on/off as required
@@ -610,11 +843,11 @@ void setSpindleLEDs(uint8_t speed)
   {
     if (led_output & mask)
     {
-      setLED(leds[spindleIndicators[loop_count]], LED_ON);
+      setLED(led[spindleIndicators[loop_count]], LED_ON);
     }
     else
     {
-      setLED(leds[spindleIndicators[loop_count]], LED_OFF);
+      setLED(led[spindleIndicators[loop_count]], LED_OFF);
     }
     mask <<= 1;
   }
@@ -627,7 +860,7 @@ void alllightson()
   {
     if (i != 9)
     { // Don't do power light
-      setLED(leds[i], LED_ON);
+      setLED(led[i], LED_ON);
     }
   }
 }
@@ -635,11 +868,12 @@ void alllightson()
 // Turn all the LEDS off
 void alllightsoff()
 {
+  print("All lights off");
   for (int i = 0; i < TOTAL_LEDS; i++)
   {
     if (i != 9)
     { // Don't do power light
-      setLED(leds[i], LED_OFF);
+      setLED(led[i], LED_OFF);
     }
   }
 }
