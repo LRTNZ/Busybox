@@ -170,7 +170,7 @@ void generateRandomProgram()
   tempProgram.movementSpeed = random(1, 6);
 
   int lengthProgram = random(PROGRAM_MIN_LENGTH, PROGRAM_MAX_LENGTH);
-  tempProgram.totalLength = lengthProgram;
+  tempProgram.totalLength = lengthProgram + 1;
 
   int skipOptStopIndex = 0;
 
@@ -245,8 +245,8 @@ void generateRandomProgram()
           continue;
         } */
 
-    // Will randomly enable/disable the cooland for a tool
-    if (randInstruction == TOOL_CHANGE)
+    // Will randomly enable/disable the coolant for a tool
+   /* if (randInstruction == TOOL_CHANGE)
     {
       tempProgram.programSteps[count].command = randInstruction;
       previousInstruction = randInstruction;
@@ -257,7 +257,7 @@ void generateRandomProgram()
         count++;
       }
       continue;
-    }
+    } */
     tempProgram.programSteps[count].command = randInstruction;
     previousInstruction = randInstruction;
     count++;
@@ -267,6 +267,7 @@ void generateRandomProgram()
   tempProgram.programSteps[count + 2].command = END;
 
   randProgram = tempProgram;
+  printRandomProgram();
 }
 
 uint8_t randomSpindleSpeed()
@@ -281,7 +282,9 @@ void print(String toPrint)
 
 void printRandomProgram()
 {
-
+  
+  print("Printing Program");
+  print("Steps in program: " + String(randProgram.totalLength));
   int count = 0;
   bool run = true;
   while (run)
@@ -412,8 +415,6 @@ void setup()
   myservo.write(SERVO_STOP);
 
   generateRandomProgram();
-  Serial.println("Print out program: ");
-  printRandomProgram();
 }
 
 void setLED(ledStruct &led, LED_STATE state)
@@ -519,30 +520,12 @@ void loop()
   }
   if (stateMode == MANUAL_RUN)
   { // Jog Mode
-    if (auto_jog_swt.isPressed())
-    {
-      stateMode = AUTO_RUN; // If Mode switch is in Auto change modes
-    }
-
-    if (spindle_plus_but.wasPressed())
-    { // Spindle +10% button
-      if (spindleSpeed < 12)
-      {
-        spindleSpeed = spindleSpeed + 2;
-      }
-    }
-
-    if (spindle_minus_but.wasPressed())
-    { // Spindle -10% button
-      if (spindleSpeed > 0)
-      {
-        spindleSpeed = spindleSpeed - 2;
-      }
-    }
+   manualSpindleSpeedCheck();
   }
 
   if (stateMode == AUTO_RUN)
   { // Auto Mode
+    manualSpindleSpeedCheck();
     if (auto_jog_swt.isReleased())
     {
       stateMode = MANUAL_RUN; // If Mode switch is in Jog change modes
@@ -577,6 +560,30 @@ void loop()
   executeProgramAutomatically();
 }
 
+void manualSpindleSpeedCheck(){
+   if (auto_jog_swt.isPressed())
+    {
+      stateMode = AUTO_RUN; // If Mode switch is in Auto change modes
+    }
+
+    if (spindle_plus_but.wasPressed())
+    { // Spindle +10% button
+      if (spindleSpeed < 12)
+      {
+        spindleSpeed = spindleSpeed + 2;
+      }
+    }
+
+    if (spindle_minus_but.wasPressed())
+    { // Spindle -10% button
+      if (spindleSpeed > 0)
+      {
+        spindleSpeed = spindleSpeed - 2;
+      }
+    }
+}
+
+
 enum subRoutineResets
 {
   TOOL_CHANGE_RST,
@@ -604,7 +611,7 @@ void executeProgramAutomatically()
 
   // static uint8_t currentStep = 0;
   static bool loadedInstruction = false;
-  static bool finishedProgram = true;
+ // static bool finishedProgram = true;
   static bool programStart = true;
 
   if (resetsToDo[EXECUTE_RST])
@@ -612,7 +619,8 @@ void executeProgramAutomatically()
     // currentStep = 0;
     finishedInstruction = false;
     loadedInstruction = false;
-    programStart = false;
+   // finishedProgram = false;
+    programStart = true;
     resetsToDo[EXECUTE_RST] = false;
   }
 
@@ -664,9 +672,11 @@ void executeProgramAutomatically()
   case SPINDLE_ON:
     setSpindleSpeed(currentInstruction.arg1);
     oneShotEnd(750);
+    break;
   case SPINDLE_OFF:
-    setSpindleSpeed(SERVO_STOP);
+    setSpindleSpeed(0);
     oneShotEnd(1500);
+    break;
   case TOOL_CHANGE:
     print("tool change case");
     finishedInstruction = toolChange();
@@ -677,6 +687,7 @@ void executeProgramAutomatically()
     oneShotEnd(1000);
     break;
   case END:
+    print("End of program");
     randProgram.executeAuto = false;
     randProgram.executeSingle = false;
     randProgram.currentStep = 0;
@@ -710,9 +721,9 @@ void oneShotEnd(int nextDelay)
 bool toolChange()
 {
 
-  print("Tool Change Steps called");
+ // print("Tool Change Steps called");
   static int stepTool = 0;
-  print(String(stepTool));
+ // print(String(stepTool));
 
   if (resetsToDo[TOOL_CHANGE_RST])
   {
@@ -727,27 +738,36 @@ bool toolChange()
     setLED(led[TOOL_CHANGE_LED], LED_ON);
     stepTool++;
     randProgram.lastStepMillis = millis();
-    randProgram.nextStepDelay = 1000;
+    randProgram.nextStepDelay = 250;
     break;
   case 1:
     setCoolantState(false);
     stepTool++;
     randProgram.lastStepMillis = millis();
-    randProgram.nextStepDelay = 500;
+    randProgram.nextStepDelay = 250;
     break;
   case 2:
     setSpindleSpeed(0);
+    setCoolantState(false);
     stepTool++;
     randProgram.lastStepMillis = millis();
     randProgram.nextStepDelay = 1000;
     break;
   case 3:
+     // Will randomly decide if this tool has coolant
+     if(1 == random(1, 3)){
+      setCoolantState(true);
+      randProgram.lastStepMillis = millis();
+      randProgram.nextStepDelay = 500;
+     }
+     stepTool++;
+  case 4:
     setLED(led[TOOL_CHANGE_LED], LED_OFF);
     stepTool++;
     randProgram.lastStepMillis = millis();
     randProgram.nextStepDelay = 1000;
     break;
-  case 4:
+  case 5:
     setSpindleSpeed(currentInstruction.arg1);
     stepTool++;
     randProgram.lastStepMillis = millis();
@@ -755,7 +775,7 @@ bool toolChange()
   }
 
   // If we have reached the end of the sequence
-  if (stepTool == 5)
+  if (stepTool == 6)
   {
     stepTool = 0;
     return true;
@@ -775,23 +795,26 @@ bool setCoolantState(bool state)
 
 void setSpindleSpeed(uint8_t speedPassed)
 {
-
+  print("Set spindle speed called");
   // Update Spindle Control
   if (cw_swt.isPressed() && !ccw_swt.isPressed())
   { // CW Mode (switch is inverted - handled by library)   Need to check for the state of the other switch position, to be able to tell when we are in the stop positiong
-    int spintemp = SERVO_STOP + (spindleSpeed * 5);
-    // Serial.println("Spindle CW Rotate");
+    int spintemp = SERVO_STOP + (speedPassed * 5);
+    spindleSpeed = spintemp;
+     Serial.println("Spindle CW Rotate");
     myservo.write(spintemp);
   }
   else if (ccw_swt.isPressed() && !cw_swt.isPressed())
   { // CCW Mode (switch is inverted - handled by library)
-    int spintemp = SERVO_STOP - (spindleSpeed * 5);
-    // Serial.println("Servo CCW");
+    int spintemp = SERVO_STOP - (speedPassed * 5);
+    spindleSpeed = spintemp;
+     Serial.println("Servo CCW");
     myservo.write(spintemp);
   }
-  else
+  
+  if(speedPassed == 0)
   { // Stop spindle
-    // Serial.println("Servo stop");
+    Serial.println("Servo stop");
     myservo.write(SERVO_STOP);
   }
 
