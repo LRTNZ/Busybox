@@ -51,3 +51,5 @@
  add random work light being on
 
  add panic when over travel or spindle switch turned off when running program
+
+ if feed hold then edit is pressed, can add/remove opt stop to the program that is yet to run
