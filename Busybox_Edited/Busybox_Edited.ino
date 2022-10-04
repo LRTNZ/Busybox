@@ -139,210 +139,10 @@ enum MODE
 
 MODE stateMode = WAITING_RESET; // Create Variable for storing mode 1 = Waiting for reset, 2 = Auto Run Mode, 3 = Manual Run Mode, 4 = E-stop event
 
-/* Self Generated Program Handling */
-
-// Enum that stores all the possible steps for a program to have.
-enum PROGRAM_STEPS
-{
-  BLANK = 0,
-  SQUARE_MOVE,
-  REVERSE_SQUARE,
-  REVERSE_SIDEWAYS,
-  SIDEWAYS_MOVE,
-  TOOL_CHANGE,
-  OVERTRAVEL,
-  COOLANT,
-  WAITING,
-  OPTIONAL_STOP,
-  SPINDLE_OFF,
-  SPINDLE_ON,
-  END,
-  NUMBER_OF_STEPS
-};
-
-// An instruction is stored as a single step/block in a program
-struct instruction
-{
-  PROGRAM_STEPS command; // The command that the current instruction has
-  int arg1; // Optional arguments to be used by an instruction
-  int arg2;
-  int arg3;
-};
-
-// The overall program structure
-struct program
-{
-  instruction programSteps[35]; // Array to store all the instances of the instruction struct that are created
-  int currentStep = 0; // The current execution step of the program
-  unsigned long lastStepMillis = 0; // The time the last step of the current instruction command was executed - needed for multi step commands
-  unsigned long nextStepDelay = 0; // The time the next step should be executed at
-  bool executeAuto = false; // Currently in auto execution mode
-  bool executeSingle = false; // In single block execution mode
-  int totalLength = 0; // How many steps the current program was generated to have (Less than the maximum we can store)
-  bool optStop = false; // Whether the program has an optional stop or not
-  int optStop_index = 0; // Where the opt stop is located if it exists
-};
-
-// Where the randomly generated program is stored
-program randProgram;
-
-// If the user wants an optional stop to be added
-bool optStopDesired = false;
-
-// Function to generate a random sequence of steps to be executed by the busybox
-void generateRandomProgram()
-{
-
-  // The program currently being generated
-  program tempProgram;
-
-  const int PROGRAM_MIN_LENGTH = 10; // Min length of the program to be generated
-  const int PROGRAM_MAX_LENGTH = 30; // Keep below initialized length to avoid issues with out of bounds errors
-
-  int lengthProgram = random(PROGRAM_MIN_LENGTH, PROGRAM_MAX_LENGTH); // Decide how long the program is to be
-  tempProgram.totalLength = lengthProgram + 1; // The total length the program will be (Count starts at 0)
-
-  int skipOptStopIndex = 0; // The location of the opt stop to be skipped
-
-  // If the user wants an optional stop to be included
-  if (optStopDesired)
-  {
-    skipOptStopIndex = random(3, lengthProgram - 2); // make sure the opt stop isn't at the start of the program
-    tempProgram.programSteps[skipOptStopIndex] = instruction{OPTIONAL_STOP}; // put the opt stop into the program at the selected location
-  }
-
-  // Start populating the list of commands
-  int count = 0;
-  
-  int randomToolSpindle = random(1,3);
-
-  if(randomToolSpindle == 2){
-    tempProgram.programSteps[0] = instruction{TOOL_CHANGE, randomSpindleSpeed()};  
-  } else{
-    tempProgram.programSteps[0] = instruction{SPINDLE_ON, randomSpindleSpeed()};
-    if (1 == random(1, 3))
-    {
-      tempProgram.programSteps[count] = instruction{COOLANT};
-      count++;
-    } 
-  }
-  
-  count++; // Inc count after taking up 1 or two places at the start of the code
-  
-  int previousInstruction = BLANK;
-
-  //  While the count of the number of steps is below the desired program length
-  while (count < lengthProgram)
-  {
-    randomSeed(analogRead(0) + analogRead(1) + analogRead(3));
-    int randInstruction = random(1, 6); // Pick a valid auto generatable instruction to execute
-
-    // If the current index already has an instruction in it, increment the count to go to the next valid index
-    if (tempProgram.programSteps[count].command == BLANK)
-    {
-      count++;
-      continue;
-    }
-
-    // If the current instruction would be the same as the previous one, skip this loop to avoid using the current number
-    if (randInstruction == previousInstruction)
-    {
-      continue;
-    }
-
-    // If the program would end to soon with something boring, skip using the current number
-    if ((count < 3 && randInstruction == OVERTRAVEL) || (count < PROGRAM_MIN_LENGTH && randInstruction == END))
-    {
-      continue;
-    }
-
-    tempProgram.programSteps[count].command = randInstruction;
-    // If the random instruction is a tool change, generate a spindle speed to use for the tool that was changed to.
-    if(randInstruction == TOOL_CHANGE){
-      tempProgram.programSteps[count].arg1 = randomSpindleSpeed();
-    }
-    // Keep track of the previous instruction to not do the same thing 30 times in a row
-    previousInstruction = randInstruction;
-
-    // Move to the next instruction generation
-    count++;
-  }
-
-  // At the end of the program, turn off the spindle, and stop the program
-  tempProgram.programSteps[count + 1].command = SPINDLE_OFF;
-  tempProgram.programSteps[count + 2].command = END;
-
-  // Store the new program
-  randProgram = tempProgram;
-  // Print out the program for debugging
-  printRandomProgram();
-}
-
-// Prints out the stored computer generated program
-void printRandomProgram()
-{
-  
-  print("Printing Program");
-  print("Steps in program: " + String(randProgram.totalLength));
-  int count = 0;
-  bool run = true;
-
-  // For each of the steps in the program, print out the instruction
-  while (run)
-  {
-    switch (randProgram.programSteps[count].command)
-    {
-    case END:
-      print("end");
-      run = false;
-      break;
-    case WAITING:
-      print("Waiting");
-      break;
-    case TOOL_CHANGE:
-      print("Tool Change");
-      break;
-    case OVERTRAVEL:
-      print("Overtravel");
-      break;
-    case OPTIONAL_STOP:
-      print("Optional Stop");
-      break;
-    case SQUARE_MOVE:
-      print("Square Move");
-      break;
-    case REVERSE_SQUARE:
-      print("Reverse Square");
-      break;
-    case REVERSE_SIDEWAYS:
-      print("Reverse Sideways");
-      break;
-    case SIDEWAYS_MOVE:
-      print("Sideways Move");
-      break;
-    case COOLANT:
-      print("Coolant");
-      break;
-    case SPINDLE_OFF:
-      print("Spindle Off");
-      break;
-    case SPINDLE_ON:
-      print("Spindle On");
-      print(String(randProgram.programSteps[count].arg1));
-      break;
-    }
-    count++;
-  }
-}
-
-
-
 uint8_t x_axis = 0;
 uint8_t y_axis = 0;
 
-unsigned long startMillis; // two variables to hold timing for timing based decisions
-unsigned long currentMillis;
-const unsigned long flash = 500; // standard flashing light period
+unsigned long currentMillis; // Used to store the current millisecond value at the start of each loop to save referencing millis everywhere.
 
 bool coolant_flash = false;
 
@@ -489,6 +289,9 @@ void loop()
 
   if (stateMode == WAITING_RESET)
   { // Waiting for reset
+
+    resetFlash = true;
+
     if (currentMillis - startMillis >= flash)
     { // test whether the period has elapsed
       // digitalWrite(led13, !digitalRead(led13));  //if so, change the state of the LED.  Uses a neat trick to change the state
@@ -502,6 +305,7 @@ void loop()
       setAllResets();
       stateMode = MANUAL_RUN;
       setLED(led[RST_LED], LED_OFF); // Turn off Reset Led just in case
+      resetFlash = false;
       generateRandomProgram();       // Generates a new random program.
     }
   }
@@ -533,6 +337,23 @@ void loop()
     }
   }
 
+  
+  
+
+  // Call the program execution function, to run any steps requrired, if any.
+  executeProgramAutomatically();
+}
+
+
+// Call to blink lights as required
+void callBlinks(){
+
+  static bool anyStandardBlinks = false;
+  unsigned long startMillis; // two variables to hold timing for timing based decisions
+  
+  const unsigned long flash = 500; // standard flashing light period
+  
+
   if (coolant_flash && (stateMode != WAITING_RESET || stateMode != ESTOP))
   {
     // Blink coolant LED if needed
@@ -542,11 +363,22 @@ void loop()
       startMillis = currentMillis; // IMPORTANT to reset the time period start etc.
     }
   }
-  
 
-  // Call the program execution function, to run any steps requrired, if any.
-  executeProgramAutomatically();
+  if (currentMillis - startMillis >= flash)
+    { // test whether the period has elapsed
+      // digitalWrite(led13, !digitalRead(led13));  //if so, change the state of the LED.  Uses a neat trick to change the state
+      setLED(led[RST_LED], LED_TOGGLE);
+      startMillis = currentMillis; // IMPORTANT to reset the time period start etc.
+    }
+
+
+  if(anyStandardBlinks){
+    startMillis = currentMillis;
+  }
+
 }
+
+
 
 void manualSpindleSpeedCheck(){
    if (auto_jog_swt.isPressed())
@@ -572,29 +404,250 @@ void manualSpindleSpeedCheck(){
 }
 
 
-enum subRoutineResets // List of the subroutines that have static values that will need to be reset between each program run
+
+
+/* 
+   ######################################################
+   ######################################################
+   ####                                              ####
+   ####     Start of internal "GCODE" program code   ####
+   ####                                              ####
+   ######################################################
+   ###################################################### 
+*/
+
+   /*  What follows here is the majority of the code for this project. It is all the code that handles 
+       generating code for the box to execute, as well as the code that then subsequently calls the different
+       parts of it that need to be executed.
+   */
+
+
+/* 
+   #############################################
+   ##    Self Generated Program Generation    ##
+   #############################################
+*/       
+
+// Enum that stores all the possible steps for a program to have.
+enum PROGRAM_STEPS
 {
-  TOOL_CHANGE_RST,
-  EXECUTE_RST,
-  NUMBER_RSTS
+  BLANK = 0,
+  SQUARE_MOVE,
+  LINE_MOVE,
+  SIDEWAYS_MOVE,
+  TOOL_CHANGE,
+  OVERTRAVEL,
+  COOLANT,
+  WAITING,
+  OPTIONAL_STOP,
+  SPINDLE_OFF,
+  SPINDLE_ON,
+  END,
+  NUMBER_OF_STEPS
 };
 
-bool resetsToDo[NUMBER_RSTS]; // Array of the resets that need to be done
-
-// Set all the subroutines to update their internal static values as required when a reset is fired off
-void setAllResets()
+// An instruction is stored as a single step/block in a program
+struct instruction
 {
-  for (uint8_t i = 0; i < NUMBER_RSTS; i++)
+  PROGRAM_STEPS command; // The command that the current instruction has
+  int arg1; // Optional arguments to be used by an instruction
+  int arg2;
+  int arg3;
+  int arg4;
+  int arg5;
+  bool argBool;
+};
+
+// The overall program structure
+struct program
+{
+  instruction programSteps[35]; // Array to store all the instances of the instruction struct that are created
+  int currentStep = 0; // The current execution step of the program
+  unsigned long lastStepMillis = 0; // The time the last step of the current instruction command was executed - needed for multi step commands
+  unsigned long nextStepDelay = 0; // The time the next step should be executed at
+  bool executeAuto = false; // Currently in auto execution mode
+  bool executeSingle = false; // In single block execution mode
+  int totalLength = 0; // How many steps the current program was generated to have (Less than the maximum we can store)
+  bool optStop = false; // Whether the program has an optional stop or not
+  int optStop_index = 0; // Where the opt stop is located if it exists
+};
+
+// Where the randomly generated program is stored
+program randProgram;
+
+// If the user wants an optional stop to be added
+bool optStopDesired = false;
+
+// Function to generate a random sequence of steps to be executed by the busybox
+void generateRandomProgram()
+{
+
+  // The program currently being generated
+  program tempProgram;
+
+  const int PROGRAM_MIN_LENGTH = 10; // Min length of the program to be generated
+  const int PROGRAM_MAX_LENGTH = 30; // Keep below initialized length to avoid issues with out of bounds errors
+
+  int lengthProgram = random(PROGRAM_MIN_LENGTH, PROGRAM_MAX_LENGTH); // Decide how long the program is to be
+  tempProgram.totalLength = lengthProgram + 1; // The total length the program will be (Count starts at 0)
+
+  int skipOptStopIndex = 0; // The location of the opt stop to be skipped
+
+  // If the user wants an optional stop to be included
+  if (optStopDesired)
   {
-    resetsToDo[i] = true;
+    skipOptStopIndex = random(3, lengthProgram - 2); // make sure the opt stop isn't at the start of the program
+    tempProgram.programSteps[skipOptStopIndex] = instruction{OPTIONAL_STOP}; // put the opt stop into the program at the selected location
   }
-  generateRandomProgram(); // Regen the program to be used whenever the system is reset
+
+  // Start populating the list of commands
+  int count = 0;
+  
+  int randomToolSpindle = random(1,3);
+
+  if(randomToolSpindle == 2){
+    tempProgram.programSteps[0] = instruction{TOOL_CHANGE, randomSpindleSpeed()};  
+  } else{
+    tempProgram.programSteps[0] = instruction{SPINDLE_ON, randomSpindleSpeed()};
+    if (1 == random(1, 3))
+    {
+      tempProgram.programSteps[count] = instruction{COOLANT};
+      count++;
+    } 
+  }
+  
+  count++; // Inc count after taking up 1 or two places at the start of the code
+  
+  int previousInstruction = BLANK;
+
+  //  While the count of the number of steps is below the desired program length
+  while (count < lengthProgram)
+  {
+    randomSeed(analogRead(0) + analogRead(1) + analogRead(3));
+    int randInstruction = random(1, 6); // Pick a valid auto generatable instruction to execute
+
+    // If the current index already has an instruction in it, increment the count to go to the next valid index
+    if (tempProgram.programSteps[count].command == BLANK)
+    {
+      count++;
+      continue;
+    }
+
+    // If the current instruction would be the same as the previous one, skip this loop to avoid using the current number
+    if (randInstruction == previousInstruction)
+    {
+      continue;
+    }
+
+    // If the program would end to soon with something boring, skip using the current number
+    if ((count < 3 && randInstruction == OVERTRAVEL) || (count < PROGRAM_MIN_LENGTH && randInstruction == END))
+    {
+      continue;
+    }
+
+    tempProgram.programSteps[count].command = randInstruction;
+    // If the random instruction is a tool change, generate a spindle speed to use for the tool that was changed to.
+    if(randInstruction == TOOL_CHANGE){
+      tempProgram.programSteps[count].arg1 = randomSpindleSpeed();
+    }
+
+    // Add fun stuff for movement commands
+    if(randInstruction == SQUARE_MOVE || randInstruction == LINE_MOVE || randInstruction == SIDEWAYS_MOVE){
+      bool tempDir = random(0,2);
+      bool tempSide = random(0,2);
+      uint8_t tempSpeed = random(80,250);
+      uint8_t tempLoops = random(1, 8);
+      
+      switch (randInstruction){
+        case SQUARE_MOVE:
+          
+      } 
+    }
+
+
+    // Keep track of the previous instruction to not do the same thing 30 times in a row
+    previousInstruction = randInstruction;
+
+    // Move to the next instruction generation
+    count++;
+  }
+
+  // At the end of the program, turn off the spindle, and stop the program
+  tempProgram.programSteps[count + 1].command = SPINDLE_OFF;
+  tempProgram.programSteps[count + 2].command = END;
+
+  // Store the new program
+  randProgram = tempProgram;
+  // Print out the program for debugging
+  printRandomProgram();
 }
+
+// Prints out the stored computer generated program
+void printRandomProgram()
+{
+  
+  print("Printing Program");
+  print("Steps in program: " + String(randProgram.totalLength));
+  int count = 0;
+  bool run = true;
+
+  // For each of the steps in the program, print out the instruction
+  while (run)
+  {
+    switch (randProgram.programSteps[count].command)
+    {
+    case END:
+      print("end");
+      run = false;
+      break;
+    case WAITING:
+      print("Waiting");
+      break;
+    case TOOL_CHANGE:
+      print("Tool Change");
+      break;
+    case OVERTRAVEL:
+      print("Overtravel");
+      break;
+    case OPTIONAL_STOP:
+      print("Optional Stop");
+      break;
+    case SQUARE_MOVE:
+      print("Square Move");
+      break;
+    case LINE_MOVE:
+      print("Line Move");
+      break;
+    case SIDEWAYS_MOVE:
+      print("Sideways Move");
+      break;
+    case COOLANT:
+      print("Coolant");
+      break;
+    case SPINDLE_OFF:
+      print("Spindle Off");
+      break;
+    case SPINDLE_ON:
+      print("Spindle On");
+      print(String(randProgram.programSteps[count].arg1));
+      break;
+    }
+    count++;
+  }
+}
+
+
+/* 
+   ############################################
+   ##    Self Generated Program Execution    ##
+   ############################################
+*/  
 
 instruction currentInstruction; // The current instruction in use (Global scope, so it can be viewed by subroutines as required)
 bool finishedInstruction = false; // If the current instruction stored in current instruction has had all of it's steps executed correctly
+bool currentlyMoving = false; // To be used to store whether the current instruction is a movement command
 
-// 
+// Gets called each loop to execute queued instructions as required
 void executeProgramAutomatically()
 {
 
@@ -679,6 +732,12 @@ void executeProgramAutomatically()
     // One shot instruction
     oneShotEnd(1000);
     break;
+  case SQUARE_MOVE:
+    break;
+  case LINE_MOVE:
+    break;
+  case SIDEWAYS_MOVE:
+    break;
   case END:
     print("End of program");
 
@@ -703,6 +762,7 @@ void executeProgramAutomatically()
   {
     // Reset the flags saying we are currently running code
     loadedInstruction = false;
+    currentlyMoving = false;
     finishedInstruction = false;
     // If it was a single instruction to execute, we need to set the flag to stop execution
     randProgram.executeSingle = false;
@@ -716,6 +776,56 @@ void oneShotEnd(int nextDelay)
   randProgram.nextStepDelay = nextDelay;
   randProgram.lastStepMillis = currentMillis;
   finishedInstruction = true;
+}
+
+
+/* 
+   ##############################################
+   ##    Self Generated Program Subroutines    ##
+   ##############################################
+*/  
+
+
+boolean squareMove(){
+  static int step = 0;
+
+  if(resetsToDo[SQUARE_RST]){
+    step = 0;
+    resetsToDo[SQUARE_RST] = false;
+  }
+
+  bool direction = currentInstruction.argBool1;
+  // int speed
+  // int loops
+  return false;
+}
+
+boolean sidewaysMove(){
+  static int step = 0;
+  if(resetsToDo[SIDEWAYS_RST]){
+    step = 0;
+    resetsToDo[SIDEWAYS_RST] = false;
+  }
+
+  bool direction = currentInstruction.argBool1;
+  // int speed
+  // int loops
+  return false;
+}
+
+boolean lineMove(){
+  static int step = 0;
+  if(resetsToDo[LINE_RST]){
+    step = 0;
+    resetsToDo[LINE_RST] = false;
+  }
+  bool direction = currentInstruction.argBool1;
+  // Int Speed
+  // int loops
+
+  // Boolean side
+  
+  return false;
 }
 
 bool toolChange()
@@ -830,6 +940,52 @@ void setSpindleSpeed(uint8_t speedPassed)
   // Calls the set spindle speed function
   setSpindleLEDs(spindleSpeed);
 }
+
+/* 
+   ####################################################
+   ##    Self Generated Program Subroutine Resets    ##
+   ####################################################
+*/ 
+
+enum subRoutineResets // List of the subroutines that have static values that will need to be reset between each program run
+{
+  TOOL_CHANGE_RST,
+  EXECUTE_RST,
+  SQUARE_RST,
+  LINE_RST,
+  SIDEWAYS_RST,
+  NUMBER_RSTS
+};
+
+bool resetsToDo[NUMBER_RSTS]; // Array of the resets that need to be done
+
+// Set all the subroutines to update their internal static values as required when a reset is fired off
+void setAllResets()
+{
+  for (uint8_t i = 0; i < NUMBER_RSTS; i++)
+  {
+    resetsToDo[i] = true;
+  }
+  generateRandomProgram(); // Regen the program to be used whenever the system is reset
+}
+
+/* 
+   ######################################################
+   ######################################################
+   ####                                              ####
+   ####     End of internal "GCODE" program code     ####
+   ####                                              ####
+   ######################################################
+   ###################################################### 
+*/
+
+
+/* 
+   ########################
+   ##    LED Handling    ##
+   ########################
+*/  
+
 
 // Array of the spindle speed LED enums, in the appropriate order to turn them on/off as required
 LED_NAME spindleIndicators[] = {LOAD_20_LED, LOAD_40_LED, LOAD_60_LED, LOAD_80_LED, LOAD_100_LED};
