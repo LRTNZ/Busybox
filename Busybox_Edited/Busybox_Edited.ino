@@ -31,7 +31,7 @@ typedef struct
 ledStruct led[22]; // Struct to hold all the LED structs that are generated for the standard LEDs
 
 const uint8_t LED_START_PIN = 22; // offset to the start pin of all the sequential LED output pins
-const uint8_t TOTAL_LEDS = 22; // Total LEDs in the list
+const uint8_t TOTAL_LEDS = 22;    // Total LEDs in the list
 
 // Enum of all of the names of the LEDS - in order of the pin mapping, as all the LEDs have sequential pin numbers.
 enum LED_NAME
@@ -145,265 +145,7 @@ uint8_t y_axis = 0;
 unsigned long currentMillis; // Used to store the current millisecond value at the start of each loop to save referencing millis everywhere.
 
 bool coolant_flash = false;
-
-
-// Default Setup function
-void setup()
-{
-
-  // Open serial up
-  Serial.begin(115200);
-  Serial.println("Serial Working");
-
-  // Deals to servo
-  myservo.attach(12); // attaches the servo on pin 9 to the servo object
-  myservo.write(95);  // Start servo running so it can be set to it's stop value later on to properly have it not spin.
-
-  /********************RGB LED SETUP*************/
-  delay(500); // power-up safety delay (was 3000)
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(fast_leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-  FastLED.setBrightness(BRIGHTNESS);
-
-  currentPalette = RainbowColors_p;
-  currentBlending = LINEARBLEND;
-  /**********************************************/
-
-  // For all of the conventional LEDs, init them into the array of LEDs
-  for (int i = 0; i < TOTAL_LEDS; i++)
-  {
-    // Setup each LED, with it's sequential pinout being stored in it's struct
-    led[i] = {i + LED_START_PIN, false};
-  }
-
-  pinMode(ledstatus, OUTPUT); // LED STATUS ON MEGA BOARD
-
-  // Start observing all of the buttons
-  estop_swt.begin();
-  opstop_swt.begin();
-  cw_swt.begin();
-  ccw_swt.begin();
-  rst_but.begin();
-  edit_but.begin();
-  auto_jog_swt.begin();
-  mach_zero_but.begin();
-  spindle_minus_but.begin();
-  feed_hold_but.begin();
-  cycle_start_but.begin();
-  spindle_plus_but.begin();
-
-  /* First Mode Setting wait for reset*/
-  startMillis = millis(); // initial start time
-  stateMode = WAITING_RESET;
-  setLED(led[POWER_LED], LED_ON); // Turn on Power light
-  spindleSpeed = 0;               // Set spindle speed variable at zero
-
-  // Seed the random number generator, using noisy analog signals from the unconnected analog pins
-  randomSeed(analogRead(0) + analogRead(1));
-
-  x_axis = random(0, 8);
-  y_axis = random(0, 8);
-
-  // Deal to the random chance of the coolant light coming on
-  int coolant_random = random(0, 6);
-
-  if (coolant_random == 5)
-  {
-    // If the coolant error needs to come on, set that light to start flashing here
-    setLED(led[COOL_LED], LED_ON);
-    coolant_flash = true;
-  }
-  
-  // Set the servo to it's stop value, to hopefully stop spinning
-  myservo.write(SERVO_STOP);
-
-  // Create the first program to use
-  generateRandomProgram();
-}
-
-
-
-void loop()
-{
-
-  // Update the read state of all of the defined buttons
-  estop_swt.read();
-  opstop_swt.read();
-  cw_swt.read();
-  ccw_swt.read();
-  rst_but.read();
-  edit_but.read();
-  auto_jog_swt.read();
-  mach_zero_but.read();
-  spindle_minus_but.read();
-  feed_hold_but.read();
-  cycle_start_but.read();
-  spindle_plus_but.read();
-
-  int val = 0;
-  static uint8_t startIndex = 0; // used for LED stripes
-
-  currentMillis = millis();
-  if (estop_swt.isPressed())
-  { // E-stop pressed do red lights till unpressed
-    myservo.write(SERVO_STOP);
-    unsigned long local_timer = 0;
-    bool lights_on = false;
-    while (estop_swt.isPressed())
-    {
-
-      estop_swt.read();
-
-      if ((local_timer + 500 < millis()) && !lights_on)
-      {
-        Serial.println("Estop pressed");
-        alllightson();
-        // control neopixels
-        SetupBlackPalette();
-        currentBlending = NOBLEND;
-        FillLEDsFromPaletteColors(startIndex);
-        FastLED.show();
-
-        lights_on = true;
-        local_timer = millis();
-      }
-
-      if ((local_timer + 500 < millis()) && lights_on)
-      {
-        alllightsoff();
-        SetupRedPalette();
-        currentBlending = NOBLEND;
-        FillLEDsFromPaletteColors(startIndex);
-        FastLED.show();
-
-        lights_on = false;
-        local_timer = millis();
-      }
-    }
-    alllightsoff();            // lights off after estop
-    stateMode = WAITING_RESET; // back to waiting for reset
-    SetupBlackPalette();
-    currentBlending = NOBLEND;
-    FillLEDsFromPaletteColors(startIndex);
-    FastLED.show();
-  }
-
-  if (stateMode == WAITING_RESET)
-  { // Waiting for reset
-
-    resetFlash = true;
-
-    if (currentMillis - startMillis >= flash)
-    { // test whether the period has elapsed
-      // digitalWrite(led13, !digitalRead(led13));  //if so, change the state of the LED.  Uses a neat trick to change the state
-      setLED(led[RST_LED], LED_TOGGLE);
-      startMillis = currentMillis; // IMPORTANT to reset the time period start etc.
-    }
-
-    val = rst_but.wasPressed(); // if reset is pushed go to mode Autorun
-    if (val == 1)
-    {
-      setAllResets();
-      stateMode = MANUAL_RUN;
-      setLED(led[RST_LED], LED_OFF); // Turn off Reset Led just in case
-      resetFlash = false;
-      generateRandomProgram();       // Generates a new random program.
-    }
-  }
-  if (stateMode == MANUAL_RUN)
-  { // Jog Mode
-   manualSpindleSpeedCheck();
-  }
-
-  if (stateMode == AUTO_RUN)
-  { // Auto Mode
-    manualSpindleSpeedCheck();
-    if (auto_jog_swt.isReleased())
-    {
-      stateMode = MANUAL_RUN; // If Mode switch is in Jog change modes
-    }
-  }
-
-  if (cycle_start_but.wasPressed())
-  {
-    Serial.println("Cycle start pressed");
-    if (stateMode == MANUAL_RUN)
-    {
-      print("Execute Single Block Should Happen");
-      randProgram.executeSingle = true;
-    }
-    else if (stateMode == AUTO_RUN)
-    {
-      randProgram.executeAuto = true;
-    }
-  }
-
-  
-  
-
-  // Call the program execution function, to run any steps requrired, if any.
-  executeProgramAutomatically();
-}
-
-
-// Call to blink lights as required
-void callBlinks(){
-
-  static bool anyStandardBlinks = false;
-  unsigned long startMillis; // two variables to hold timing for timing based decisions
-  
-  const unsigned long flash = 500; // standard flashing light period
-  
-
-  if (coolant_flash && (stateMode != WAITING_RESET || stateMode != ESTOP))
-  {
-    // Blink coolant LED if needed
-    if (currentMillis - startMillis >= flash)
-    { // test whether the period has elapsed
-      setLED(led[COOL_LED], LED_TOGGLE);
-      startMillis = currentMillis; // IMPORTANT to reset the time period start etc.
-    }
-  }
-
-  if (currentMillis - startMillis >= flash)
-    { // test whether the period has elapsed
-      // digitalWrite(led13, !digitalRead(led13));  //if so, change the state of the LED.  Uses a neat trick to change the state
-      setLED(led[RST_LED], LED_TOGGLE);
-      startMillis = currentMillis; // IMPORTANT to reset the time period start etc.
-    }
-
-
-  if(anyStandardBlinks){
-    startMillis = currentMillis;
-  }
-
-}
-
-
-
-void manualSpindleSpeedCheck(){
-   if (auto_jog_swt.isPressed())
-    {
-      stateMode = AUTO_RUN; // If Mode switch is in Auto change modes
-    }
-
-    if (spindle_plus_but.wasPressed())
-    { // Spindle +10% button
-      if (spindleSpeed < 12)
-      {
-        spindleSpeed = spindleSpeed + 2;
-      }
-    }
-
-    if (spindle_minus_but.wasPressed())
-    { // Spindle -10% button
-      if (spindleSpeed > 0)
-      {
-        spindleSpeed = spindleSpeed - 2;
-      }
-    }
-}
-
-
+bool resetFlash = false;
 
 
 /* 
@@ -416,17 +158,16 @@ void manualSpindleSpeedCheck(){
    ###################################################### 
 */
 
-   /*  What follows here is the majority of the code for this project. It is all the code that handles 
+/*  What follows here is the majority of the code for this project. It is all the code that handles 
        generating code for the box to execute, as well as the code that then subsequently calls the different
        parts of it that need to be executed.
    */
-
 
 /* 
    #############################################
    ##    Self Generated Program Generation    ##
    #############################################
-*/       
+*/
 
 // Enum that stores all the possible steps for a program to have.
 enum PROGRAM_STEPS
@@ -450,26 +191,26 @@ enum PROGRAM_STEPS
 struct instruction
 {
   PROGRAM_STEPS command; // The command that the current instruction has
-  int arg1; // Optional arguments to be used by an instruction
+  int arg1;              // Optional arguments to be used by an instruction
   int arg2;
   int arg3;
   int arg4;
   int arg5;
-  bool argBool;
+  bool argBool1;
 };
 
 // The overall program structure
 struct program
 {
-  instruction programSteps[35]; // Array to store all the instances of the instruction struct that are created
-  int currentStep = 0; // The current execution step of the program
+  instruction programSteps[35];     // Array to store all the instances of the instruction struct that are created
+  int currentStep = 0;              // The current execution step of the program
   unsigned long lastStepMillis = 0; // The time the last step of the current instruction command was executed - needed for multi step commands
-  unsigned long nextStepDelay = 0; // The time the next step should be executed at
-  bool executeAuto = false; // Currently in auto execution mode
-  bool executeSingle = false; // In single block execution mode
-  int totalLength = 0; // How many steps the current program was generated to have (Less than the maximum we can store)
-  bool optStop = false; // Whether the program has an optional stop or not
-  int optStop_index = 0; // Where the opt stop is located if it exists
+  unsigned long nextStepDelay = 0;  // The time the next step should be executed at
+  bool executeAuto = false;         // Currently in auto execution mode
+  bool executeSingle = false;       // In single block execution mode
+  int totalLength = 0;              // How many steps the current program was generated to have (Less than the maximum we can store)
+  bool optStop = false;             // Whether the program has an optional stop or not
+  int optStop_index = 0;            // Where the opt stop is located if it exists
 };
 
 // Where the randomly generated program is stored
@@ -489,35 +230,38 @@ void generateRandomProgram()
   const int PROGRAM_MAX_LENGTH = 30; // Keep below initialized length to avoid issues with out of bounds errors
 
   int lengthProgram = random(PROGRAM_MIN_LENGTH, PROGRAM_MAX_LENGTH); // Decide how long the program is to be
-  tempProgram.totalLength = lengthProgram + 1; // The total length the program will be (Count starts at 0)
+  tempProgram.totalLength = lengthProgram + 1;                        // The total length the program will be (Count starts at 0)
 
   int skipOptStopIndex = 0; // The location of the opt stop to be skipped
 
   // If the user wants an optional stop to be included
   if (optStopDesired)
   {
-    skipOptStopIndex = random(3, lengthProgram - 2); // make sure the opt stop isn't at the start of the program
+    skipOptStopIndex = random(3, lengthProgram - 2);                         // make sure the opt stop isn't at the start of the program
     tempProgram.programSteps[skipOptStopIndex] = instruction{OPTIONAL_STOP}; // put the opt stop into the program at the selected location
   }
 
   // Start populating the list of commands
   int count = 0;
-  
-  int randomToolSpindle = random(1,3);
 
-  if(randomToolSpindle == 2){
-    tempProgram.programSteps[0] = instruction{TOOL_CHANGE, randomSpindleSpeed()};  
-  } else{
+  int randomToolSpindle = random(1, 3);
+
+  if (randomToolSpindle == 2)
+  {
+    tempProgram.programSteps[0] = instruction{TOOL_CHANGE, randomSpindleSpeed()};
+  }
+  else
+  {
     tempProgram.programSteps[0] = instruction{SPINDLE_ON, randomSpindleSpeed()};
     if (1 == random(1, 3))
     {
       tempProgram.programSteps[count] = instruction{COOLANT};
       count++;
-    } 
+    }
   }
-  
+
   count++; // Inc count after taking up 1 or two places at the start of the code
-  
+
   int previousInstruction = BLANK;
 
   //  While the count of the number of steps is below the desired program length
@@ -547,23 +291,25 @@ void generateRandomProgram()
 
     tempProgram.programSteps[count].command = randInstruction;
     // If the random instruction is a tool change, generate a spindle speed to use for the tool that was changed to.
-    if(randInstruction == TOOL_CHANGE){
+    if (randInstruction == TOOL_CHANGE)
+    {
       tempProgram.programSteps[count].arg1 = randomSpindleSpeed();
     }
 
     // Add fun stuff for movement commands
-    if(randInstruction == SQUARE_MOVE || randInstruction == LINE_MOVE || randInstruction == SIDEWAYS_MOVE){
-      bool tempDir = random(0,2);
-      bool tempSide = random(0,2);
-      uint8_t tempSpeed = random(80,250);
+    if (randInstruction == SQUARE_MOVE || randInstruction == LINE_MOVE || randInstruction == SIDEWAYS_MOVE)
+    {
+      bool tempDir = random(0, 2);
+      bool tempSide = random(0, 2);
+      uint8_t tempSpeed = random(80, 250);
       uint8_t tempLoops = random(1, 8);
-      
-      switch (randInstruction){
-        case SQUARE_MOVE:
-          
-      } 
-    }
 
+      switch (randInstruction)
+      {
+      case SQUARE_MOVE:
+        break;
+      }
+    }
 
     // Keep track of the previous instruction to not do the same thing 30 times in a row
     previousInstruction = randInstruction;
@@ -585,7 +331,7 @@ void generateRandomProgram()
 // Prints out the stored computer generated program
 void printRandomProgram()
 {
-  
+
   print("Printing Program");
   print("Steps in program: " + String(randProgram.totalLength));
   int count = 0;
@@ -636,16 +382,43 @@ void printRandomProgram()
   }
 }
 
+/* 
+   ####################################################
+   ##    Self Generated Program Subroutine Resets    ##
+   ####################################################
+*/
+
+enum subRoutineResets // List of the subroutines that have static values that will need to be reset between each program run
+{
+  TOOL_CHANGE_RST,
+  EXECUTE_RST,
+  SQUARE_RST,
+  LINE_RST,
+  SIDEWAYS_RST,
+  NUMBER_RSTS
+};
+
+bool resetsToDo[NUMBER_RSTS]; // Array of the resets that need to be done
+
+// Set all the subroutines to update their internal static values as required when a reset is fired off
+void setAllResets()
+{
+  for (uint8_t i = 0; i < NUMBER_RSTS; i++)
+  {
+    resetsToDo[i] = true;
+  }
+  generateRandomProgram(); // Regen the program to be used whenever the system is reset
+}
 
 /* 
    ############################################
    ##    Self Generated Program Execution    ##
    ############################################
-*/  
+*/
 
-instruction currentInstruction; // The current instruction in use (Global scope, so it can be viewed by subroutines as required)
+instruction currentInstruction;   // The current instruction in use (Global scope, so it can be viewed by subroutines as required)
 bool finishedInstruction = false; // If the current instruction stored in current instruction has had all of it's steps executed correctly
-bool currentlyMoving = false; // To be used to store whether the current instruction is a movement command
+bool currentlyMoving = false;     // To be used to store whether the current instruction is a movement command
 
 // Gets called each loop to execute queued instructions as required
 void executeProgramAutomatically()
@@ -727,7 +500,7 @@ void executeProgramAutomatically()
     finishedInstruction = toolChange();
     break;
   case COOLANT:
-   // Turn coolant on
+    // Turn coolant on
     setCoolantState(true);
     // One shot instruction
     oneShotEnd(1000);
@@ -756,7 +529,7 @@ void executeProgramAutomatically()
     finishedInstruction = true;
     break;
   }
-  
+
   // If the instruction has finished in the current loop through the code
   if (finishedInstruction)
   {
@@ -778,18 +551,18 @@ void oneShotEnd(int nextDelay)
   finishedInstruction = true;
 }
 
-
 /* 
    ##############################################
    ##    Self Generated Program Subroutines    ##
    ##############################################
-*/  
+*/
 
-
-boolean squareMove(){
+boolean squareMove()
+{
   static int step = 0;
 
-  if(resetsToDo[SQUARE_RST]){
+  if (resetsToDo[SQUARE_RST])
+  {
     step = 0;
     resetsToDo[SQUARE_RST] = false;
   }
@@ -800,9 +573,11 @@ boolean squareMove(){
   return false;
 }
 
-boolean sidewaysMove(){
+boolean sidewaysMove()
+{
   static int step = 0;
-  if(resetsToDo[SIDEWAYS_RST]){
+  if (resetsToDo[SIDEWAYS_RST])
+  {
     step = 0;
     resetsToDo[SIDEWAYS_RST] = false;
   }
@@ -813,9 +588,11 @@ boolean sidewaysMove(){
   return false;
 }
 
-boolean lineMove(){
+boolean lineMove()
+{
   static int step = 0;
-  if(resetsToDo[LINE_RST]){
+  if (resetsToDo[LINE_RST])
+  {
     step = 0;
     resetsToDo[LINE_RST] = false;
   }
@@ -824,16 +601,16 @@ boolean lineMove(){
   // int loops
 
   // Boolean side
-  
+
   return false;
 }
 
 bool toolChange()
 {
 
- // print("Tool Change Steps called");
+  // print("Tool Change Steps called");
   static int stepTool = 0;
- // print(String(stepTool));
+  // print(String(stepTool));
 
   if (resetsToDo[TOOL_CHANGE_RST])
   {
@@ -865,13 +642,14 @@ bool toolChange()
     randProgram.nextStepDelay = 1000;
     break;
   case 3:
-     // Will randomly decide if this tool has coolant
-     if(1 == random(1, 3)){
+    // Will randomly decide if this tool has coolant
+    if (1 == random(1, 3))
+    {
       setCoolantState(true);
       randProgram.lastStepMillis = millis();
       randProgram.nextStepDelay = 500;
-     }
-     stepTool++;
+    }
+    stepTool++;
   case 4:
     setLED(led[TOOL_CHANGE_LED], LED_OFF);
     stepTool++;
@@ -920,18 +698,18 @@ void setSpindleSpeed(uint8_t speedPassed)
   { // CW Mode (switch is inverted - handled by library)   Need to check for the state of the other switch position, to be able to tell when we are in the stop positiong
     int spintemp = SERVO_STOP + (speedPassed * 5);
     spindleSpeed = spintemp;
-     Serial.println("Spindle CW Rotate");
+    Serial.println("Spindle CW Rotate");
     myservo.write(spintemp);
   }
   else if (ccw_swt.isPressed() && !cw_swt.isPressed())
   { // CCW Mode (switch is inverted - handled by library)
     int spintemp = SERVO_STOP - (speedPassed * 5);
     spindleSpeed = spintemp;
-     Serial.println("Servo CCW");
+    Serial.println("Servo CCW");
     myservo.write(spintemp);
   }
-  
-  if(speedPassed == 0)
+
+  if (speedPassed == 0)
   { // Stop spindle
     Serial.println("Servo stop");
     myservo.write(SERVO_STOP);
@@ -939,34 +717,6 @@ void setSpindleSpeed(uint8_t speedPassed)
 
   // Calls the set spindle speed function
   setSpindleLEDs(spindleSpeed);
-}
-
-/* 
-   ####################################################
-   ##    Self Generated Program Subroutine Resets    ##
-   ####################################################
-*/ 
-
-enum subRoutineResets // List of the subroutines that have static values that will need to be reset between each program run
-{
-  TOOL_CHANGE_RST,
-  EXECUTE_RST,
-  SQUARE_RST,
-  LINE_RST,
-  SIDEWAYS_RST,
-  NUMBER_RSTS
-};
-
-bool resetsToDo[NUMBER_RSTS]; // Array of the resets that need to be done
-
-// Set all the subroutines to update their internal static values as required when a reset is fired off
-void setAllResets()
-{
-  for (uint8_t i = 0; i < NUMBER_RSTS; i++)
-  {
-    resetsToDo[i] = true;
-  }
-  generateRandomProgram(); // Regen the program to be used whenever the system is reset
 }
 
 /* 
@@ -979,13 +729,259 @@ void setAllResets()
    ###################################################### 
 */
 
+// Default Setup function
+void setup()
+{
+
+  // Open serial up
+  Serial.begin(115200);
+  Serial.println("Serial Working");
+
+  // Deals to servo
+  myservo.attach(12); // attaches the servo on pin 9 to the servo object
+  myservo.write(95);  // Start servo running so it can be set to it's stop value later on to properly have it not spin.
+
+  /********************RGB LED SETUP*************/
+  delay(500); // power-up safety delay (was 3000)
+  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(fast_leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  FastLED.setBrightness(BRIGHTNESS);
+
+  currentPalette = RainbowColors_p;
+  currentBlending = LINEARBLEND;
+  /**********************************************/
+
+  // For all of the conventional LEDs, init them into the array of LEDs
+  for (int i = 0; i < TOTAL_LEDS; i++)
+  {
+    // Setup each LED, with it's sequential pinout being stored in it's struct
+    led[i] = {i + LED_START_PIN, false};
+  }
+
+  pinMode(ledstatus, OUTPUT); // LED STATUS ON MEGA BOARD
+
+  // Start observing all of the buttons
+  estop_swt.begin();
+  opstop_swt.begin();
+  cw_swt.begin();
+  ccw_swt.begin();
+  rst_but.begin();
+  edit_but.begin();
+  auto_jog_swt.begin();
+  mach_zero_but.begin();
+  spindle_minus_but.begin();
+  feed_hold_but.begin();
+  cycle_start_but.begin();
+  spindle_plus_but.begin();
+
+  /* First Mode Setting wait for reset*/
+  stateMode = WAITING_RESET;
+  setLED(led[POWER_LED], LED_ON); // Turn on Power light
+  spindleSpeed = 0;               // Set spindle speed variable at zero
+
+  // Seed the random number generator, using noisy analog signals from the unconnected analog pins
+  randomSeed(analogRead(0) + analogRead(1));
+
+  x_axis = random(0, 8);
+  y_axis = random(0, 8);
+
+  // Deal to the random chance of the coolant light coming on
+  int coolant_random = random(0, 6);
+
+  if (coolant_random == 5)
+  {
+    // If the coolant error needs to come on, set that light to start flashing here
+    setLED(led[COOL_LED], LED_ON);
+    coolant_flash = true;
+  }
+
+  // Set the servo to it's stop value, to hopefully stop spinning
+  myservo.write(SERVO_STOP);
+
+  // Create the first program to use
+  generateRandomProgram();
+}
+
+void loop()
+{
+
+  // Update the read state of all of the defined buttons
+  estop_swt.read();
+  opstop_swt.read();
+  cw_swt.read();
+  ccw_swt.read();
+  rst_but.read();
+  edit_but.read();
+  auto_jog_swt.read();
+  mach_zero_but.read();
+  spindle_minus_but.read();
+  feed_hold_but.read();
+  cycle_start_but.read();
+  spindle_plus_but.read();
+
+  int val = 0;
+  static uint8_t startIndex = 0; // used for LED stripes
+
+  currentMillis = millis();
+  if (estop_swt.isPressed())
+  { // E-stop pressed do red lights till unpressed
+    myservo.write(SERVO_STOP);
+    unsigned long local_timer = 0;
+    bool lights_on = false;
+    while (estop_swt.isPressed())
+    {
+
+      estop_swt.read();
+
+      if ((local_timer + 500 < millis()) && !lights_on)
+      {
+        Serial.println("Estop pressed");
+        alllightson();
+        // control neopixels
+        SetupBlackPalette();
+        currentBlending = NOBLEND;
+        FillLEDsFromPaletteColors(startIndex);
+        FastLED.show();
+
+        lights_on = true;
+        local_timer = millis();
+      }
+
+      if ((local_timer + 500 < millis()) && lights_on)
+      {
+        alllightsoff();
+        SetupRedPalette();
+        currentBlending = NOBLEND;
+        FillLEDsFromPaletteColors(startIndex);
+        FastLED.show();
+
+        lights_on = false;
+        local_timer = millis();
+      }
+    }
+    alllightsoff();            // lights off after estop
+    stateMode = WAITING_RESET; // back to waiting for reset
+    SetupBlackPalette();
+    currentBlending = NOBLEND;
+    FillLEDsFromPaletteColors(startIndex);
+    FastLED.show();
+  }
+
+  if (stateMode == WAITING_RESET)
+  { // Waiting for reset
+
+    resetFlash = true;
+
+    val = rst_but.wasPressed(); // if reset is pushed go to mode Autorun
+    if (val == 1)
+    {
+      setAllResets();
+      stateMode = MANUAL_RUN;
+      setLED(led[RST_LED], LED_OFF); // Turn off Reset Led just in case
+      resetFlash = false;
+      generateRandomProgram(); // Generates a new random program.
+    }
+  }
+  if (stateMode == MANUAL_RUN)
+  { // Jog Mode
+    manualSpindleSpeedCheck();
+  }
+
+  if (stateMode == AUTO_RUN)
+  { // Auto Mode
+    manualSpindleSpeedCheck();
+    if (auto_jog_swt.isReleased())
+    {
+      stateMode = MANUAL_RUN; // If Mode switch is in Jog change modes
+    }
+  }
+
+  if (cycle_start_but.wasPressed())
+  {
+    Serial.println("Cycle start pressed");
+    if (stateMode == MANUAL_RUN)
+    {
+      print("Execute Single Block Should Happen");
+      randProgram.executeSingle = true;
+    }
+    else if (stateMode == AUTO_RUN)
+    {
+      randProgram.executeAuto = true;
+    }
+  }
+
+  // Call the program execution function, to run any steps requrired, if any.
+  executeProgramAutomatically();
+}
+
+// Call to blink lights as required
+void callBlinks()
+{
+
+  static bool anyStandardBlinks = false;
+  static unsigned long startMillis; // two variables to hold timing for timing based decisions
+  const unsigned long flash = 500;  // standard flashing light period
+
+  static bool localCoolantBlink;
+
+  if (coolant_flash && (stateMode != WAITING_RESET || stateMode != ESTOP))
+  {
+    localCoolantBlink = true;
+    anyStandardBlinks = true;
+  }
+  else
+  {
+    localCoolantBlink = false;
+  }
+
+  if (resetFlash)
+  { 
+    anyStandardBlinks = true; 
+  }
+
+  if (anyStandardBlinks)
+  {
+    startMillis = currentMillis;
+
+    if (localCoolantBlink)
+      setLED(led[COOL_LED], LED_TOGGLE);
+    if (resetFlash)
+      setLED(led[RST_LED], LED_TOGGLE);
+  }
+
+  anyStandardBlinks = false;
+}
+
+void manualSpindleSpeedCheck()
+{
+  if (auto_jog_swt.isPressed())
+  {
+    stateMode = AUTO_RUN; // If Mode switch is in Auto change modes
+  }
+
+  if (spindle_plus_but.wasPressed())
+  { // Spindle +10% button
+    if (spindleSpeed < 12)
+    {
+      spindleSpeed = spindleSpeed + 2;
+    }
+  }
+
+  if (spindle_minus_but.wasPressed())
+  { // Spindle -10% button
+    if (spindleSpeed > 0)
+    {
+      spindleSpeed = spindleSpeed - 2;
+    }
+  }
+}
+
+
 
 /* 
    ########################
    ##    LED Handling    ##
    ########################
-*/  
-
+*/
 
 // Array of the spindle speed LED enums, in the appropriate order to turn them on/off as required
 LED_NAME spindleIndicators[] = {LOAD_20_LED, LOAD_40_LED, LOAD_60_LED, LOAD_80_LED, LOAD_100_LED};
@@ -1064,15 +1060,11 @@ void alllightsoff()
   }
 }
 
-
 //Shorter print function helper method
 void print(String toPrint)
 {
   Serial.println(toPrint);
 }
-
-
-
 
 // RANDOM FASTLED CODE?
 
