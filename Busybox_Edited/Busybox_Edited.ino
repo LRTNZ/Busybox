@@ -118,10 +118,10 @@ Button rst_but(RST_BUT, DEBOUNCE_TIME, true, true);                      // RESE
 Button edit_but(EDIT_BUT, DEBOUNCE_TIME, true, false);                   // EDIT BUTTON
 Button auto_jog_swt(AUTO_JOG_SWT, DEBOUNCE_TIME, true, false);           // AUTO JOG SWITCH
 Button mach_zero_but(MACH_ZERO_BUT, DEBOUNCE_TIME, true, false);         // Machine Zero
-Button spindle_minus_but(SPINDLE_MINUS_BUT, DEBOUNCE_TIME, true, false); // Spindle -
+Button spindle_minus_but(SPINDLE_MINUS_BUT, DEBOUNCE_TIME, true, true); // Spindle -
 Button feed_hold_but(FEED_HOLD_BUT, DEBOUNCE_TIME, true, false);          // FEED HOLD SWITCH (INVERTED!!!!!!NC SWITCH)
 Button cycle_start_but(CYCLE_START_BUT, DEBOUNCE_TIME, true, true);     // CYCLE START
-Button spindle_plus_but(SPINDLE_PLUS_BUT, DEBOUNCE_TIME, true, false);   // Spindle +
+Button spindle_plus_but(SPINDLE_PLUS_BUT, DEBOUNCE_TIME, true, true);   // Spindle +
 
 // Servo for the "Spindle"
 Servo myservo;        // create servo object to control a servo
@@ -326,6 +326,7 @@ void generateRandomProgram()
   if (randomToolSpindle == 2)
   {
     tempProgram.programSteps[0] = instruction{TOOL_CHANGE, randomSpindleSpeed()};
+    count++;
   }
   else
   {
@@ -937,17 +938,19 @@ void setSpindleSpeed(uint8_t speedPassed)
   if (cw_swt.isPressed() && !ccw_swt.isPressed())
   { // CW Mode (switch is inverted - handled by library)   Need to check for the state of the other switch position, to be able to tell when we are in the stop positiong
     int spintemp = SERVO_STOP + (speedPassed * 5);
-    spindleSpeed = spintemp;
+    spindleSpeed = speedPassed;
     Serial.println("Spindle CW Rotate");
     myservo.write(spintemp);
   }
   else if (ccw_swt.isPressed() && !cw_swt.isPressed())
   { // CCW Mode (switch is inverted - handled by library)
     int spintemp = SERVO_STOP - (speedPassed * 5);
-    spindleSpeed = spintemp;
+    spindleSpeed = speedPassed;
     Serial.println("Servo CCW");
     myservo.write(spintemp);
   }
+
+  spindleSpeed = constrain(spindleSpeed, 0, 12);
 
   if (speedPassed == 0)
   { // Stop spindle
@@ -1334,18 +1337,23 @@ void manualSpindleSpeedCheck()
 
   if (spindle_plus_but.wasPressed())
   { // Spindle +10% button
-    if (spindleSpeed < 12)
-    {
-      spindleSpeed = spindleSpeed + 2;
-    }
+    print("Spindle speed check"); 
+    //if (spindleSpeed < 12)
+   // {
+      print("Set spindle speed");
+      spindleSpeed = spindleSpeed + 1;
+      setSpindleSpeed(spindleSpeed);
+      //print(spindleSpeed);
+    //}
   }
 
   if (spindle_minus_but.wasPressed())
   { // Spindle -10% button
-    if (spindleSpeed > 0)
-    {
+    //if (spindleSpeed > 0)
+    //{
       spindleSpeed = spindleSpeed - 2;
-    }
+      setSpindleSpeed(spindleSpeed);
+    //}
   }
 }
 
