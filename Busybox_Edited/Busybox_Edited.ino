@@ -125,7 +125,7 @@ Button spindle_plus_but(SPINDLE_PLUS_BUT, DEBOUNCE_TIME, true, false);   // Spin
 
 // Servo for the "Spindle"
 Servo myservo;        // create servo object to control a servo
-#define SERVO_STOP 89 // value the servo will not run at
+#define SERVO_STOP 90 // value the servo will not run at
 int spindleSpeed;     // Create a variable for storing spindle speed - the servo valuef
 
 // Overall running mode that the box is currently in
@@ -134,6 +134,7 @@ enum MODE
   WAITING_RESET,
   MANUAL_RUN,
   AUTO_RUN,
+  EDIT,
   ESTOP
 };
 
@@ -144,9 +145,13 @@ uint8_t y_axis = 0;
 
 unsigned long currentMillis; // Used to store the current millisecond value at the start of each loop to save referencing millis everywhere.
 
+bool optstopFlash = false;
 bool coolant_flash = false;
 bool resetFlash = false;
 
+bool emergencyFlash = false;
+bool emergencyLightState = false;
+bool justleftEstop = false;
 
 /* 
    ######################################################
@@ -211,6 +216,8 @@ struct program
   int totalLength = 0;              // How many steps the current program was generated to have (Less than the maximum we can store)
   bool optStop = false;             // Whether the program has an optional stop or not
   int optStop_index = 0;            // Where the opt stop is located if it exists
+
+  bool dryRun = false;
 };
 
 // Where the randomly generated program is stored
@@ -433,6 +440,7 @@ void executeProgramAutomatically()
     finishedInstruction = false;
     loadedInstruction = false;
     programStart = true;
+    setLED(led[DRY_RUN_LED], LED_OFF);
     resetsToDo[EXECUTE_RST] = false;
   }
 
@@ -484,10 +492,9 @@ void executeProgramAutomatically()
   // Switch based on the current instruction - let's us call the right instruction subroutine
   switch (currentInstruction.command)
   {
-
   case SPINDLE_ON:
     // Spindle on to the speed in arg 1
-    setSpindleSpeed(currentInstruction.arg1);
+      setSpindleSpeed(currentInstruction.arg1);
     // Only instruction step so fire off the ending of the instruction
     oneShotEnd(750);
     break;
@@ -505,18 +512,22 @@ void executeProgramAutomatically()
     // One shot instruction
     oneShotEnd(1000);
     break;
-  case SQUARE_MOVE:
+  case OPTIONAL_STOP:
+    finishedInstruction = optStop();
     break;
-  case LINE_MOVE:
-    break;
-  case SIDEWAYS_MOVE:
-    break;
+  //case SQUARE_MOVE:
+  //  break;
+  //case LINE_MOVE:
+  //  break;
+  //case SIDEWAYS_MOVE:
+  //  break;
   case END:
     print("End of program");
 
     // Resets the various values that need to be reset inside the program
     randProgram.executeAuto = false;
     randProgram.executeSingle = false;
+    randProgram.dryRun = false;
     randProgram.currentStep = 0;
     randProgram.lastStepMillis = 0;
     randProgram.nextStepDelay = 0;
@@ -537,6 +548,12 @@ void executeProgramAutomatically()
     loadedInstruction = false;
     currentlyMoving = false;
     finishedInstruction = false;
+
+    // If we just did a single block step as a dry run, get out of dry run mode
+    if(randProgram.executeSingle){
+      randProgram.dryRun = false;
+      setLED(led[DRY_RUN_LED], LED_OFF);
+    }
     // If it was a single instruction to execute, we need to set the flag to stop execution
     randProgram.executeSingle = false;
   }
@@ -683,6 +700,25 @@ bool setCoolantState(bool state)
   return true;
 }
 
+bool optStop(){
+  
+  print("opt stop called");
+  optstopFlash = true;
+
+  if(opstop_swt.wasPressed()){
+    optstopFlash = false;
+    return true;
+  }
+
+  return false;
+
+}
+
+
+
+
+
+
 // Returns a random value to use for the spindle speed
 uint8_t randomSpindleSpeed()
 {
@@ -692,6 +728,11 @@ uint8_t randomSpindleSpeed()
 // Method to set the spindle servo rotation speed
 void setSpindleSpeed(uint8_t speedPassed)
 {
+
+  if(randProgram.dryRun == true){
+    print("In dry run mode");
+    return;
+  }
   print("Set spindle speed called");
   // Update Spindle Control
   if (cw_swt.isPressed() && !ccw_swt.isPressed())
@@ -716,7 +757,12 @@ void setSpindleSpeed(uint8_t speedPassed)
   }
 
   // Calls the set spindle speed function
-  setSpindleLEDs(spindleSpeed);
+
+  // if we are not wanting to flash the emergency lights (To avoid odd pulsing of turning these on then immediately off)
+  if(!emergencyFlash){
+    setSpindleLEDs(spindleSpeed);
+  }
+  
 }
 
 /* 
@@ -821,48 +867,31 @@ void loop()
   int val = 0;
   static uint8_t startIndex = 0; // used for LED stripes
 
+  // Current millis val to use wherever required
   currentMillis = millis();
+  // Blink lights as required
+  callBlinks();
+
+  // If estop is pressed
   if (estop_swt.isPressed())
-  { // E-stop pressed do red lights till unpressed
-    myservo.write(SERVO_STOP);
-    unsigned long local_timer = 0;
-    bool lights_on = false;
-    while (estop_swt.isPressed())
-    {
+  {
+    emergencyFlash = true;
+    setSpindleSpeed(0);
+    // Set flag to be used the time we go through the loop and estop has been depressed
+    justleftEstop = true;
+    // Start a new loop instead of carrying through the rest of the code
+    return;
+  }
 
-      estop_swt.read();
-
-      if ((local_timer + 500 < millis()) && !lights_on)
-      {
-        Serial.println("Estop pressed");
-        alllightson();
-        // control neopixels
-        SetupBlackPalette();
-        currentBlending = NOBLEND;
-        FillLEDsFromPaletteColors(startIndex);
-        FastLED.show();
-
-        lights_on = true;
-        local_timer = millis();
-      }
-
-      if ((local_timer + 500 < millis()) && lights_on)
-      {
-        alllightsoff();
-        SetupRedPalette();
-        currentBlending = NOBLEND;
-        FillLEDsFromPaletteColors(startIndex);
-        FastLED.show();
-
-        lights_on = false;
-        local_timer = millis();
-      }
-    }
+  // if the above if statement is not entered, yet the flag is set the estop must just have been un-etopped
+  if(justleftEstop){
+    emergencyFlash = false;
+    justleftEstop = false;
     alllightsoff();            // lights off after estop
     stateMode = WAITING_RESET; // back to waiting for reset
     SetupBlackPalette();
     currentBlending = NOBLEND;
-    FillLEDsFromPaletteColors(startIndex);
+    FillLEDsFromPaletteColors(0);
     FastLED.show();
   }
 
@@ -895,8 +924,7 @@ void loop()
     }
   }
 
-  if (cycle_start_but.wasPressed())
-  {
+  if(cycle_start_but.wasReleased()){
     Serial.println("Cycle start pressed");
     if (stateMode == MANUAL_RUN)
     {
@@ -907,6 +935,35 @@ void loop()
     {
       randProgram.executeAuto = true;
     }
+  } else if (cycle_start_but.pressedFor(1000))
+  {
+    randProgram.dryRun = true;
+    setLED(led[DRY_RUN_LED], LED_ON);
+    Serial.println("Cycle start pressed for");
+    if (stateMode == MANUAL_RUN)
+    {
+      print("Execute Single Block Should Happen");
+      randProgram.executeSingle = true;
+    }
+    else if (stateMode == AUTO_RUN)
+    {
+      randProgram.executeAuto = true;
+    }
+  }
+
+
+  if(edit_but.wasPressed() && !(randProgram.executeAuto || randProgram.executeSingle)){
+    
+    print("Edit mode");
+    static MODE priorMode;
+    if(!(stateMode == EDIT)){
+      priorMode = stateMode;
+      stateMode = EDIT;
+    } else {
+      stateMode = priorMode;
+      setLED(led[EDIT_BUT_LED], LED_OFF);
+    }
+    
   }
 
   // Call the program execution function, to run any steps requrired, if any.
@@ -933,19 +990,51 @@ void callBlinks()
     localCoolantBlink = false;
   }
 
-  if (resetFlash)
+  if (resetFlash || emergencyFlash)
   { 
     anyStandardBlinks = true; 
   }
 
-  if (anyStandardBlinks)
+  if (stateMode == EDIT){
+    anyStandardBlinks = true;
+  }
+
+  if (anyStandardBlinks && (startMillis + flash) < currentMillis)
   {
     startMillis = currentMillis;
 
-    if (localCoolantBlink)
+    if (localCoolantBlink){
       setLED(led[COOL_LED], LED_TOGGLE);
-    if (resetFlash)
+    }
+  
+    if (resetFlash){
+      print("Flashing reset?");
       setLED(led[RST_LED], LED_TOGGLE);
+    }
+      
+    if(stateMode == EDIT){
+      setLED(led[EDIT_BUT_LED], LED_TOGGLE);
+    }
+
+    // If we need to flash the lights in an emergency state
+    if(emergencyFlash){
+      if(!emergencyLightState){
+        emergencyLightState = true;
+        alllightson();
+        SetupBlackPalette();
+        currentBlending = NOBLEND;
+        FillLEDsFromPaletteColors(0);
+        FastLED.show();
+      } else {
+        emergencyLightState = false;
+        alllightsoff();
+        SetupRedPalette();
+        currentBlending = NOBLEND;
+        FillLEDsFromPaletteColors(0);
+        FastLED.show();
+      }
+    }
+
   }
 
   anyStandardBlinks = false;
