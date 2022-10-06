@@ -119,8 +119,8 @@ Button edit_but(EDIT_BUT, DEBOUNCE_TIME, true, false);                   // EDIT
 Button auto_jog_swt(AUTO_JOG_SWT, DEBOUNCE_TIME, true, false);           // AUTO JOG SWITCH
 Button mach_zero_but(MACH_ZERO_BUT, DEBOUNCE_TIME, true, false);         // Machine Zero
 Button spindle_minus_but(SPINDLE_MINUS_BUT, DEBOUNCE_TIME, true, false); // Spindle -
-Button feed_hold_but(FEED_HOLD_BUT, DEBOUNCE_TIME, true, true);          // FEED HOLD SWITCH (INVERTED!!!!!!NC SWITCH)
-Button cycle_start_but(CYCLE_START_BUT, DEBOUNCE_TIME, true, false);     // CYCLE START
+Button feed_hold_but(FEED_HOLD_BUT, DEBOUNCE_TIME, true, false);          // FEED HOLD SWITCH (INVERTED!!!!!!NC SWITCH)
+Button cycle_start_but(CYCLE_START_BUT, DEBOUNCE_TIME, true, true);     // CYCLE START
 Button spindle_plus_but(SPINDLE_PLUS_BUT, DEBOUNCE_TIME, true, false);   // Spindle +
 
 // Servo for the "Spindle"
@@ -135,6 +135,7 @@ enum MODE
   MANUAL_RUN,
   AUTO_RUN,
   EDIT,
+  OVERTRAVELLED,
   ESTOP
 };
 
@@ -145,14 +146,17 @@ uint8_t y_axis = 0;
 
 unsigned long currentMillis; // Used to store the current millisecond value at the start of each loop to save referencing millis everywhere.
 
+bool worklightOn = false;
 bool optstopFlash = false;
 bool coolant_flash = false;
 bool resetFlash = false;
+bool panicLEDFlash = false;
 
 bool emergencyFlash = false;
 bool emergencyLightState = false;
 bool justleftEstop = false;
 
+bool homingMachine = false;
 /* 
    ######################################################
    ######################################################
@@ -202,6 +206,7 @@ struct instruction
   int arg4;
   int arg5;
   bool argBool1;
+  bool argBool2;
 };
 
 // The overall program structure
@@ -220,134 +225,19 @@ struct program
   bool dryRun = false;
 };
 
-// Where the randomly generated program is stored
-program randProgram;
-
-// If the user wants an optional stop to be added
-bool optStopDesired = false;
-
-// Function to generate a random sequence of steps to be executed by the busybox
-void generateRandomProgram()
-{
-
-  // The program currently being generated
-  program tempProgram;
-
-  const int PROGRAM_MIN_LENGTH = 10; // Min length of the program to be generated
-  const int PROGRAM_MAX_LENGTH = 30; // Keep below initialized length to avoid issues with out of bounds errors
-
-  int lengthProgram = random(PROGRAM_MIN_LENGTH, PROGRAM_MAX_LENGTH); // Decide how long the program is to be
-  tempProgram.totalLength = lengthProgram + 1;                        // The total length the program will be (Count starts at 0)
-
-  int skipOptStopIndex = 0; // The location of the opt stop to be skipped
-
-  // If the user wants an optional stop to be included
-  if (optStopDesired)
-  {
-    skipOptStopIndex = random(3, lengthProgram - 2);                         // make sure the opt stop isn't at the start of the program
-    tempProgram.programSteps[skipOptStopIndex] = instruction{OPTIONAL_STOP}; // put the opt stop into the program at the selected location
-  }
-
-  // Start populating the list of commands
-  int count = 0;
-
-  int randomToolSpindle = random(1, 3);
-
-  if (randomToolSpindle == 2)
-  {
-    tempProgram.programSteps[0] = instruction{TOOL_CHANGE, randomSpindleSpeed()};
-  }
-  else
-  {
-    tempProgram.programSteps[0] = instruction{SPINDLE_ON, randomSpindleSpeed()};
-    if (1 == random(1, 3))
-    {
-      tempProgram.programSteps[count] = instruction{COOLANT};
-      count++;
-    }
-  }
-
-  count++; // Inc count after taking up 1 or two places at the start of the code
-
-  int previousInstruction = BLANK;
-
-  //  While the count of the number of steps is below the desired program length
-  while (count < lengthProgram)
-  {
-    randomSeed(analogRead(0) + analogRead(1) + analogRead(3));
-    int randInstruction = random(1, 6); // Pick a valid auto generatable instruction to execute
-
-    // If the current index already has an instruction in it, increment the count to go to the next valid index
-    if (tempProgram.programSteps[count].command == BLANK)
-    {
-      count++;
-      continue;
-    }
-
-    // If the current instruction would be the same as the previous one, skip this loop to avoid using the current number
-    if (randInstruction == previousInstruction)
-    {
-      continue;
-    }
-
-    // If the program would end to soon with something boring, skip using the current number
-    if ((count < 3 && randInstruction == OVERTRAVEL) || (count < PROGRAM_MIN_LENGTH && randInstruction == END))
-    {
-      continue;
-    }
-
-    tempProgram.programSteps[count].command = randInstruction;
-    // If the random instruction is a tool change, generate a spindle speed to use for the tool that was changed to.
-    if (randInstruction == TOOL_CHANGE)
-    {
-      tempProgram.programSteps[count].arg1 = randomSpindleSpeed();
-    }
-
-    // Add fun stuff for movement commands
-    if (randInstruction == SQUARE_MOVE || randInstruction == LINE_MOVE || randInstruction == SIDEWAYS_MOVE)
-    {
-      bool tempDir = random(0, 2);
-      bool tempSide = random(0, 2);
-      uint8_t tempSpeed = random(80, 250);
-      uint8_t tempLoops = random(1, 8);
-
-      switch (randInstruction)
-      {
-      case SQUARE_MOVE:
-        break;
-      }
-    }
-
-    // Keep track of the previous instruction to not do the same thing 30 times in a row
-    previousInstruction = randInstruction;
-
-    // Move to the next instruction generation
-    count++;
-  }
-
-  // At the end of the program, turn off the spindle, and stop the program
-  tempProgram.programSteps[count + 1].command = SPINDLE_OFF;
-  tempProgram.programSteps[count + 2].command = END;
-
-  // Store the new program
-  randProgram = tempProgram;
-  // Print out the program for debugging
-  printRandomProgram();
-}
-
 // Prints out the stored computer generated program
-void printRandomProgram()
+void printRandomProgram(struct program &toPrint)
 {
 
   print("Printing Program");
-  print("Steps in program: " + String(randProgram.totalLength));
+  print("Steps in program: " + String(toPrint.totalLength));
   int count = 0;
   bool run = true;
 
   // For each of the steps in the program, print out the instruction
   while (run)
   {
-    switch (randProgram.programSteps[count].command)
+    switch (toPrint.programSteps[count].command)
     {
     case END:
       print("end");
@@ -382,12 +272,153 @@ void printRandomProgram()
       break;
     case SPINDLE_ON:
       print("Spindle On");
-      print(String(randProgram.programSteps[count].arg1));
+      print(String(toPrint.programSteps[count].arg1));
       break;
     }
     count++;
   }
 }
+
+
+
+
+// Where the randomly generated program is stored
+program randProgram;
+
+// If the user wants an optional stop to be added
+bool optStopDesired = false;
+
+// Function to generate a random sequence of steps to be executed by the busybox
+void generateRandomProgram()
+{
+
+  // The program currently being generated
+  program tempProgram;
+
+  for(int i = 0; i < 34; i++){
+    tempProgram.programSteps[i] = instruction{BLANK};
+  }
+
+  const int PROGRAM_MIN_LENGTH = 10; // Min length of the program to be generated
+  const int PROGRAM_MAX_LENGTH = 30; // Keep below initialized length to avoid issues with out of bounds errors
+
+  int lengthProgram = random(PROGRAM_MIN_LENGTH, PROGRAM_MAX_LENGTH); // Decide how long the program is to be
+  tempProgram.totalLength = lengthProgram + 1;                        // The total length the program will be (Count starts at 0)
+
+  int skipOptStopIndex = 0; // The location of the opt stop to be skipped
+
+  // If the user wants an optional stop to be included
+  if (optStopDesired)
+  {
+    skipOptStopIndex = random(3, lengthProgram - 2);                         // make sure the opt stop isn't at the start of the program
+    tempProgram.programSteps[skipOptStopIndex] = instruction{OPTIONAL_STOP}; // put the opt stop into the program at the selected location
+    tempProgram.optStop = true;
+    randProgram.optStop_index = skipOptStopIndex;
+    print("temp program");
+    printRandomProgram(tempProgram);
+  }
+
+  // Start populating the list of commands
+  int count = 0;
+
+  int randomToolSpindle = random(1, 3);
+
+  if (randomToolSpindle == 2)
+  {
+    tempProgram.programSteps[0] = instruction{TOOL_CHANGE, randomSpindleSpeed()};
+  }
+  else
+  {
+    tempProgram.programSteps[0] = instruction{SPINDLE_ON, randomSpindleSpeed()};
+    if (1 == random(1, 3))
+    {
+      tempProgram.programSteps[count] = instruction{COOLANT};
+      count++;
+    }
+  }
+
+  count++; // Inc count after taking up 1 or two places at the start of the code
+
+  int previousInstruction = BLANK;
+
+  //  While the count of the number of steps is below the desired program length
+  while (count < lengthProgram)
+  {
+    randomSeed(analogRead(0) + analogRead(1) + analogRead(3));
+    int randInstruction = random(1, 6); // Pick a valid auto generatable instruction to execute
+    
+    if(randInstruction == OVERTRAVEL){
+      int choice = random(1,10);
+      // Add step of minimising number of overtravels
+      if(choice != 8){
+        continue;
+      }
+    }
+
+    // If the current index already has an instruction in it, increment the count to go to the next valid index
+    if (tempProgram.programSteps[count].command != BLANK)
+    {
+      count++;
+      continue;
+    }
+
+    // If the current instruction would be the same as the previous one, skip this loop to avoid using the current number
+    if (randInstruction == previousInstruction)
+    {
+      continue;
+    }
+
+    // If the program would end to soon with something boring, skip using the current number
+    if ((count < 3 && randInstruction == OVERTRAVEL) || (count < PROGRAM_MIN_LENGTH && randInstruction == END))
+    {
+      continue;
+    }
+
+    tempProgram.programSteps[count].command = randInstruction;
+    // If the random instruction is a tool change, generate a spindle speed to use for the tool that was changed to.
+    if (randInstruction == TOOL_CHANGE)
+    {
+      tempProgram.programSteps[count].arg1 = randomSpindleSpeed();
+    }
+
+    // Add fun stuff for movement commands
+    if (randInstruction == SQUARE_MOVE || randInstruction == LINE_MOVE || randInstruction == SIDEWAYS_MOVE)
+    {
+      bool tempDir = random(0, 2);
+      bool tempSide = random(0, 2);
+      uint8_t tempSpeed = random(50, 350);
+      uint8_t tempLoops = random(1, 8);
+
+   //   switch (randInstruction)
+   //   {
+   //   case SQUARE_MOVE:
+   //   case LINE_MOVE:
+       tempProgram.programSteps[count].argBool1 = tempDir;
+       tempProgram.programSteps[count].argBool2 = tempSide;
+       tempProgram.programSteps[count].arg1 = tempSpeed;
+       tempProgram.programSteps[count].arg2 = tempLoops;
+    //   break;
+    //  }
+    }
+
+    // Keep track of the previous instruction to not do the same thing 30 times in a row
+    previousInstruction = randInstruction;
+
+    // Move to the next instruction generation
+    count++;
+  }
+
+  // At the end of the program, turn off the spindle, and stop the program
+  tempProgram.programSteps[count + 1].command = SPINDLE_OFF;
+  tempProgram.programSteps[count + 2].command = END;
+
+  // Store the new program
+  randProgram = tempProgram;
+  // Print out the program for debugging
+  printRandomProgram(randProgram);
+}
+
+
 
 /* 
    ####################################################
@@ -489,6 +520,12 @@ void executeProgramAutomatically()
     return;
   }
 
+if(feed_hold_but.isPressed()){
+  setLED(led[FEED_HOLD_LED], LED_ON);
+  return;
+} else {
+  setLED(led[FEED_HOLD_LED], LED_OFF);
+}
   // Switch based on the current instruction - let's us call the right instruction subroutine
   switch (currentInstruction.command)
   {
@@ -515,24 +552,20 @@ void executeProgramAutomatically()
   case OPTIONAL_STOP:
     finishedInstruction = optStop();
     break;
-  //case SQUARE_MOVE:
-  //  break;
-  //case LINE_MOVE:
-  //  break;
-  //case SIDEWAYS_MOVE:
-  //  break;
+  case OVERTRAVEL:
+    overtravel();
+  case SQUARE_MOVE:
+    finishedInstruction = squareMove();
+    break;
+  case LINE_MOVE:
+    finishedInstruction = lineMove();
+    break;
+  case SIDEWAYS_MOVE:
+  finishedInstruction = sidewaysMove();
+    break;
   case END:
     print("End of program");
-
-    // Resets the various values that need to be reset inside the program
-    randProgram.executeAuto = false;
-    randProgram.executeSingle = false;
-    randProgram.dryRun = false;
-    randProgram.currentStep = 0;
-    randProgram.lastStepMillis = 0;
-    randProgram.nextStepDelay = 0;
-    // Reached the end of the current program
-    resetsToDo[EXECUTE_RST] = true;
+    endProgram();
     break;
   default:
     print("defaulted");
@@ -559,6 +592,34 @@ void executeProgramAutomatically()
   }
 }
 
+void overtravel(){
+
+  if(random(1, 3) == 1){
+    setLED(led[ERR_LED], LED_ON);
+    stateMode = WAITING_RESET;
+  } else {
+    panicLEDFlash = true;
+    setLED(led[OVERTRAVEL_LED], LED_OFF);
+    panicLEDFlash = false;
+    setSpindleSpeed(0);
+    stateMode = OVERTRAVELLED;
+  }
+  endProgram();
+}
+
+void endProgram(){
+
+    // Resets the various values that need to be reset inside the program
+    randProgram.executeAuto = false;
+    randProgram.executeSingle = false;
+    randProgram.dryRun = false;
+    randProgram.currentStep = 0;
+    randProgram.lastStepMillis = 0;
+    randProgram.nextStepDelay = 0;
+    // Reached the end of the current program
+    resetsToDo[EXECUTE_RST] = true;
+}
+
 // Function to deal with instructions with only one step
 void oneShotEnd(int nextDelay)
 {
@@ -576,51 +637,193 @@ void oneShotEnd(int nextDelay)
 
 boolean squareMove()
 {
+  static bool loadedVal = false;
   static int step = 0;
+  static int ledIndex = 0;
+  static bool currentDirection = true;
+  static bool direction = currentInstruction.argBool1;
+  static bool side = currentInstruction.argBool2;
+  static int speed = currentInstruction.arg1;
+  static int loops = currentInstruction.arg2;
 
   if (resetsToDo[SQUARE_RST])
   {
     step = 0;
+    loadedVal = false;
     resetsToDo[SQUARE_RST] = false;
   }
 
-  bool direction = currentInstruction.argBool1;
-  // int speed
-  // int loops
-  return false;
-}
-
-boolean sidewaysMove()
-{
-  static int step = 0;
-  if (resetsToDo[SIDEWAYS_RST])
-  {
-    step = 0;
-    resetsToDo[SIDEWAYS_RST] = false;
+  if(!loadedVal){
+    ledIndex = -1;
+    direction = currentInstruction.argBool1;
+    currentDirection = currentInstruction.argBool1;
+    side = currentInstruction.argBool2;
+    speed = currentInstruction.arg1;
+    loops = currentInstruction.arg2;
+    loadedVal = true;
   }
 
-  bool direction = currentInstruction.argBool1;
-  // int speed
-  // int loops
-  return false;
+  if(ledIndex < 7){
+    ledIndex += 1;
+  } else {
+    step+= 1;
+    currentDirection = !currentDirection;
+    side = !side;
+    ledIndex = 0;
+  }
+
+  uint8_t temp = 0;
+  if(!currentDirection){
+    temp = map(ledIndex, 7, 0, 0, 7);
+  } else {
+    temp = ledIndex;
+  }
+
+  if(side){
+    setLED_XY(temp, 0);
+    x_axis = temp;
+    y_axis = 0;
+  } else {
+    setLED_XY(0, temp);
+    x_axis = 0;
+    y_axis = temp;
+  }
+
+   randProgram.lastStepMillis = millis();
+   randProgram.nextStepDelay = speed;
+
+  if(step <= loops){
+    return false;
+  } else {
+    resetsToDo[SQUARE_RST] = true;
+    return true;
+  }
 }
 
 boolean lineMove()
 {
+
+  static bool loadedVal = false;
   static int step = 0;
+  static int ledIndex = 0;
+  static bool currentDirection = true;
+  static bool direction = currentInstruction.argBool1;
+  static bool side = currentInstruction.argBool2;
+  static int speed = currentInstruction.arg1;
+  static int loops = currentInstruction.arg2;
+
   if (resetsToDo[LINE_RST])
   {
     step = 0;
+    loadedVal = false;
     resetsToDo[LINE_RST] = false;
   }
-  bool direction = currentInstruction.argBool1;
-  // Int Speed
-  // int loops
 
-  // Boolean side
+  if(!loadedVal){
+    ledIndex = 0;
+    direction = currentInstruction.argBool1;
+    currentDirection = currentInstruction.argBool1;
+    side = currentInstruction.argBool2;
+    speed = currentInstruction.arg1;
+    loops = currentInstruction.arg2;
+    loadedVal = true;
+  }
 
-  return false;
+  if(ledIndex < 7){
+    ledIndex += 1;
+  } else {
+    step+= 1;
+    currentDirection = !currentDirection;
+    ledIndex = 0;
+  }
+
+  uint8_t temp = 0;
+  if(!currentDirection){
+    temp = map(ledIndex, 7, 0, 0, 7);
+  } else {
+    temp = ledIndex;
+  }
+
+  if(side){
+    setLED_XY(temp, 0);
+    x_axis = temp;
+    y_axis = 0;
+  } else {
+    setLED_XY(0, temp);
+    x_axis = 0;
+    y_axis = temp;
+  }
+
+   randProgram.lastStepMillis = millis();
+   randProgram.nextStepDelay = speed;
+
+  if(step <= loops){
+    return false;
+  } else {
+    resetsToDo[LINE_RST] = true;
+    return true;
+  }
 }
+
+boolean sidewaysMove()
+{
+
+  static bool loadedVal = false;
+  static int step = 0;
+  static int ledIndex = 0;
+  static bool currentDirection = true;
+  static bool direction = currentInstruction.argBool1;
+  static bool side = currentInstruction.argBool2;
+  static int speed = currentInstruction.arg1;
+  static int loops = currentInstruction.arg2;
+
+  if (resetsToDo[SIDEWAYS_RST])
+  {
+    step = 0;
+    loadedVal = false;
+    resetsToDo[SIDEWAYS_RST] = false;
+  }
+
+  if(!loadedVal){
+    ledIndex = 0;
+    direction = currentInstruction.argBool1;
+    currentDirection = currentInstruction.argBool1;
+    side = currentInstruction.argBool2;
+    speed = currentInstruction.arg1;
+    loops = currentInstruction.arg2;
+    loadedVal = true;
+  }
+
+  if(ledIndex < 7){
+    ledIndex += 1;
+  } else {
+    step+= 1;
+    currentDirection = !currentDirection;
+    ledIndex = 0;
+  }
+
+  uint8_t temp = 0;
+  if(!currentDirection){
+    temp = map(ledIndex, 7, 0, 0, 7);
+  } else {
+    temp = ledIndex;
+  }
+
+    setLED_XY(temp, temp);
+    x_axis = temp;
+    y_axis = temp;
+
+   randProgram.lastStepMillis = millis();
+   randProgram.nextStepDelay = speed;
+
+  if(step <= loops){
+    return false;
+  } else {
+    resetsToDo[SIDEWAYS_RST] = true;
+    return true;
+  }
+}
+
 
 bool toolChange()
 {
@@ -702,22 +905,18 @@ bool setCoolantState(bool state)
 
 bool optStop(){
   
-  print("opt stop called");
-  optstopFlash = true;
+  ///print("opt stop called");
 
+  optstopFlash = true;
+  setLED(led[WAIT_LED], LED_ON);
   if(opstop_swt.wasPressed()){
     optstopFlash = false;
+    setLED(led[OPT_STOP_BUT_LED], LED_OFF);
+    setLED(led[WAIT_LED], LED_OFF);
     return true;
   }
-
   return false;
-
 }
-
-
-
-
-
 
 // Returns a random value to use for the spindle speed
 uint8_t randomSpindleSpeed()
@@ -759,8 +958,8 @@ void setSpindleSpeed(uint8_t speedPassed)
   // Calls the set spindle speed function
 
   // if we are not wanting to flash the emergency lights (To avoid odd pulsing of turning these on then immediately off)
-  if(!emergencyFlash){
-    setSpindleLEDs(spindleSpeed);
+  if(stateMode != ESTOP){
+    setSpindleLEDs(speedPassed);
   }
   
 }
@@ -830,6 +1029,8 @@ void setup()
   x_axis = random(0, 8);
   y_axis = random(0, 8);
 
+  setLED_XY(x_axis, y_axis);
+
   // Deal to the random chance of the coolant light coming on
   int coolant_random = random(0, 6);
 
@@ -838,6 +1039,13 @@ void setup()
     // If the coolant error needs to come on, set that light to start flashing here
     setLED(led[COOL_LED], LED_ON);
     coolant_flash = true;
+  }
+
+  int randomWorklight = random(1,4);
+
+  if(randomWorklight == 2){
+    setLED(led[WORK_LED], LED_ON);
+    worklightOn = true;
   }
 
   // Set the servo to it's stop value, to hopefully stop spinning
@@ -889,10 +1097,17 @@ void loop()
     justleftEstop = false;
     alllightsoff();            // lights off after estop
     stateMode = WAITING_RESET; // back to waiting for reset
+    if(worklightOn){
+      setLED(led[WORK_LED], LED_ON);
+    }
     SetupBlackPalette();
     currentBlending = NOBLEND;
     FillLEDsFromPaletteColors(0);
     FastLED.show();
+  }
+
+  if(rst_but.wasPressed()){
+    stateMode = WAITING_RESET;
   }
 
   if (stateMode == WAITING_RESET)
@@ -903,9 +1118,12 @@ void loop()
     val = rst_but.wasPressed(); // if reset is pushed go to mode Autorun
     if (val == 1)
     {
+      setSpindleSpeed(0);
       setAllResets();
       stateMode = MANUAL_RUN;
       setLED(led[RST_LED], LED_OFF); // Turn off Reset Led just in case
+      setLED(led[PANIC_LED], LED_OFF);
+      setLED(led[ERR_LED], LED_OFF);
       resetFlash = false;
       generateRandomProgram(); // Generates a new random program.
     }
@@ -935,7 +1153,7 @@ void loop()
     {
       randProgram.executeAuto = true;
     }
-  } else if (cycle_start_but.pressedFor(1000))
+  } else if (cycle_start_but.pressedFor(1000) && !(randProgram.executeSingle || randProgram.executeAuto))
   {
     randProgram.dryRun = true;
     setLED(led[DRY_RUN_LED], LED_ON);
@@ -962,12 +1180,63 @@ void loop()
     } else {
       stateMode = priorMode;
       setLED(led[EDIT_BUT_LED], LED_OFF);
+      optstopFlash = false;
+      setLED(led[OPT_STOP_BUT_LED], LED_OFF);
     }
     
   }
 
+  if(stateMode == EDIT && opstop_swt.wasPressed()){
+      if(!randProgram.optStop){
+        print("Adding optstop");
+        optStopDesired = true;
+        generateRandomProgram();
+      } else {
+        print("Removing optstop");
+        optStopDesired = false;
+        generateRandomProgram();
+      }
+  }
+
+  if(stateMode == EDIT && randProgram.optStop){
+    optstopFlash = true;
+  } else {
+    optstopFlash = false;
+  }
+
+  if((stateMode == AUTO_RUN || stateMode == MANUAL_RUN) && randProgram.executeAuto == false && randProgram.executeSingle == false && mach_zero_but.wasPressed()){
+    print("Homing machine should start");   
+    homingMachine = true;
+  }
+
+  if(homingMachine){
+    runHomingMachine();
+  }
+
   // Call the program execution function, to run any steps requrired, if any.
   executeProgramAutomatically();
+  ChangePalettePeriodically();
+}
+
+void runHomingMachine(){
+  static unsigned long lastStepTime = 0;
+  uint8_t xAxisTemp = 0;
+  uint8_t yAxisTemp = 0;
+
+  if(lastStepTime + 300 < currentMillis){
+    lastStepTime = currentMillis;
+    if(x_axis > 0){
+      print("Set x val homing");
+      x_axis -= 1;
+    }
+    if(y_axis > 0){
+      y_axis -= 1;
+    }
+    setLED_XY(x_axis, y_axis);
+  }
+  if(x_axis == 0 && y_axis == 0){
+    homingMachine = false;
+  }
 }
 
 // Call to blink lights as required
@@ -980,6 +1249,8 @@ void callBlinks()
 
   static bool localCoolantBlink;
 
+  static LED_STATE syncState = LED_OFF; 
+
   if (coolant_flash && (stateMode != WAITING_RESET || stateMode != ESTOP))
   {
     localCoolantBlink = true;
@@ -990,7 +1261,7 @@ void callBlinks()
     localCoolantBlink = false;
   }
 
-  if (resetFlash || emergencyFlash)
+  if (resetFlash || emergencyFlash || optstopFlash)
   { 
     anyStandardBlinks = true; 
   }
@@ -1003,17 +1274,31 @@ void callBlinks()
   {
     startMillis = currentMillis;
 
+    if(syncState == LED_OFF){
+      syncState = LED_ON;
+    } else {
+      syncState = LED_OFF;
+    }
+
     if (localCoolantBlink){
-      setLED(led[COOL_LED], LED_TOGGLE);
+      setLED(led[COOL_LED], syncState);
     }
   
     if (resetFlash){
       print("Flashing reset?");
-      setLED(led[RST_LED], LED_TOGGLE);
+      setLED(led[RST_LED], syncState);
     }
       
     if(stateMode == EDIT){
-      setLED(led[EDIT_BUT_LED], LED_TOGGLE);
+      setLED(led[EDIT_BUT_LED], syncState);
+    }
+
+    if(optstopFlash){
+      setLED(led[OPT_STOP_BUT_LED], syncState);
+    }
+
+    if(panicLEDFlash){
+      setLED(led[PANIC_LED], syncState);
     }
 
     // If we need to flash the lights in an emergency state
@@ -1078,6 +1363,8 @@ LED_NAME spindleIndicators[] = {LOAD_20_LED, LOAD_40_LED, LOAD_60_LED, LOAD_80_L
 void setSpindleLEDs(uint8_t speed)
 {
 
+  speed = constrain(speed, 0, 10);
+  print("Set spindle leds called");
   //  "Static" Preserves variable between function calls
   static uint8_t led_output = 0;
   static byte mask = 1;
@@ -1089,18 +1376,23 @@ void setSpindleLEDs(uint8_t speed)
   case 0:
     led_output = 0;
     break;
+  case 1:
   case 2:
     led_output = 1;
     break;
+  case 3:
   case 4:
     led_output = 3;
     break;
+  case 5:
   case 6:
     led_output = 7;
     break;
+  case 7:
   case 8:
     led_output = 15;
     break;
+  case 9:
   case 10:
     led_output = 31;
     break;
@@ -1148,6 +1440,24 @@ void alllightsoff()
     }
   }
 }
+
+void setLED_XY(uint8_t x_val, uint8_t y_val){
+  int colourIndex = 0;
+  fill_solid(fast_leds, 16, CRGB::Black);
+  for(int i = 0; i<x_val; i++){
+    fast_leds[i+8] = ColorFromPalette(currentPalette, colourIndex, 255, currentBlending);
+    colourIndex += 3;
+  }
+
+  for(int i = 0; i < y_val; i++){
+    uint8_t temp = map(i, 7,0,0,7);
+    fast_leds[temp] = ColorFromPalette(currentPalette, colourIndex, 255, currentBlending);
+    colourIndex += 3;
+  }
+  FastLED.show();
+}
+
+
 
 //Shorter print function helper method
 void print(String toPrint)
